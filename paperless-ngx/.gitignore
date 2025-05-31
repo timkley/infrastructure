@@ -1,1 +1,4 @@
 .env
+paperless_data
+paperless_media
+paperless_redisdata
