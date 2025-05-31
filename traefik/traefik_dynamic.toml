@@ -11,3 +11,5 @@
   [http.routers.api.tls]
     certResolver = "lets-encrypt"
 
+[http.serversTransports.insecureskipverify]
+  insecureSkipVerify = true
