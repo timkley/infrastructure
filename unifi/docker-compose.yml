@@ -45,7 +45,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.unifi.rule=Host(`unifi2.timkley.dev`)"
       - "traefik.http.routers.unify.tls=true"
-      - "traefik.http.routers.unifi.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.unifi.tls.certresolver=lets-encrypt"
       - "traefik.http.services.unifi.loadbalancer.server.port=8443"
       - "traefik.http.services.unifi.loadbalancer.server.scheme=https"
   logs:
