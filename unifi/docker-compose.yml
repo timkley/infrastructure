@@ -54,7 +54,7 @@ services:
       - "traefik.http.routers.unifi-secure.tls.certresolver=lets-encrypt" # Change to your certresolver name
       - "traefik.http.routers.unifi-secure.service=unifi"
       - "traefik.http.services.unifi.loadbalancer.server.port=8443"
-      - "traefik.docker.network=proxy"
+      - "traefik.docker.network=web"
       - "traefik.http.services.unifi.loadbalancer.server.scheme=https"
   logs:
     image: bash
