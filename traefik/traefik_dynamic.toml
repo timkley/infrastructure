@@ -1,0 +1,13 @@
+[http.middlewares.simpleAuth.basicAuth]
+  users = [
+    "admin:$apr1$k0ajpxue$TjnHftvZjDWYd4GKUVEV6."
+  ]
+
+[http.routers.api]
+  rule = "Host(`traefik.timkley.dev`)"
+  entrypoints = ["websecure"]
+  middlewares = ["simpleAuth"]
+  service = "api@internal"
+  [http.routers.api.tls]
+    certResolver = "lets-encrypt"
+
