@@ -44,11 +44,11 @@ services:
       - "10001:10001/udp" # AP discovery
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.unifi.entrypoints=http" # Change to your entrypoint name
+      - "traefik.http.routers.unifi.entrypoints=web" # Change to your entrypoint name
       - "traefik.http.routers.unifi.rule=Host(`unifi2.timkley.dev`)"
       - "traefik.http.middlewares.unifi-https-redirect.redirectscheme.scheme=https"
       - "traefik.http.routers.unifi.middlewares=unifi-https-redirect"
-      - "traefik.http.routers.unifi-secure.entrypoints=https"
+      - "traefik.http.routers.unifi-secure.entrypoints=websecure"
       - "traefik.http.routers.unifi-secure.rule=Host(`unifi2.timkley.dev`)"
       - "traefik.http.routers.unifi-secure.tls=true"
       - "traefik.http.routers.unifi-secure.tls.certresolver=lets-encrypt" # Change to your certresolver name
