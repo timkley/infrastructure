@@ -16,6 +16,7 @@ services:
     init: true
     networks:
       - unifi
+      - web
     restart: always
     volumes:
       - dir:/unifi
