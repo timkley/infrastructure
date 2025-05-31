@@ -20,7 +20,7 @@ services:
     image: docker.io/library/redis:7
     restart: unless-stopped
     volumes:
-      - ./data/redisdata:/data
+      - ./data/redis_data:/data
     networks:
       - backend
 
