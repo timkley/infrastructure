@@ -44,18 +44,24 @@ services:
       - "10001:10001/udp" # AP discovery
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.unifi.entrypoints=web" # Change to your entrypoint name
+      - "traefik.http.routers.unifi.entrypoints=web"
       - "traefik.http.routers.unifi.rule=Host(`unifi.timkley.dev`)"
       - "traefik.http.middlewares.unifi-https-redirect.redirectscheme.scheme=https"
       - "traefik.http.routers.unifi.middlewares=unifi-https-redirect"
       - "traefik.http.routers.unifi-secure.entrypoints=websecure"
       - "traefik.http.routers.unifi-secure.rule=Host(`unifi.timkley.dev`)"
       - "traefik.http.routers.unifi-secure.tls=true"
-      - "traefik.http.routers.unifi-secure.tls.certresolver=lets-encrypt" # Change to your certresolver name
+      - "traefik.http.routers.unifi-secure.tls.certresolver=lets-encrypt"
       - "traefik.http.routers.unifi-secure.service=unifi"
       - "traefik.http.services.unifi.loadbalancer.server.port=8443"
       - "traefik.http.services.unifi.loadbalancer.server.scheme=https"
       - "traefik.http.services.unifi.loadbalancer.serverstransport=insecureskipverify@file"
+      - "traefik.http.middlewares.unifi-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.unifi-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      - "traefik.http.middlewares.unifi-headers.headers.customrequestheaders.X-Real-IP={{ .RemoteAddr }}"
+      - "traefik.http.routers.unifi-secure.middlewares=unifi-headers"
+      - "traefik.http.middlewares.unifi-compress.compress=true"
+      - "traefik.http.routers.unifi-secure.middlewares=unifi-headers,unifi-compress"
       - "traefik.docker.network=web"
   logs:
     image: bash
