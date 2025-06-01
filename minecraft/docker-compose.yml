@@ -1,12 +1,39 @@
 services:
   mc:
-    image: itzg/minecraft-server
+    image: itzg/minecraft-server:latest
     tty: true
     stdin_open: true
     ports:
       - "25565:25565"
     environment:
       EULA: "TRUE"
+      TYPE: "FABRIC"
+      MEMORY: "3072M"
+      MAX_PLAYERS: "5"
+      TZ: "Europe/Berlin"
+      DIFFICULTY: "2"
+      LEVEL: "world_polypia"
+      OPS: |-
+        timkley
+      ENABLE_WHITELIST: "true"
+      WHITELIST: |-
+        timkley
+        PitBull2709
+        paulipantheri
+        timkley1
+      MODRINTH_PROJECTS: |-
+        armor-poser
+        lithium
+        audioplayer
+        ferrite-core
+        inventory-totem
+        just-mob-heads
+        shulker-drops-two
+      MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
+      MODRINTH_ALLOWED_VERSION_TYPE: "alpha"
+      SPAWN_PROTECTION: "0"
+      PLUGINS: |-
+        https://modrinth.com/plugin/simple-voice-chat
     volumes:
-      # attach the relative directory 'data' to the container's /data path
-      - ./data:/data
+      - "./data:/data"
+
