@@ -1,0 +1,19 @@
+services:
+  typesense:
+    image: typesense/typesense:28.0
+    restart: unless-stopped
+    volumes:
+      - ./typesense-data:/data
+    command: '--data-dir /data --api-key=${API_KEY} --enable-cors'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.typesense.rule=Host(`typesense.timkley.dev`)"
+      - "traefik.http.routers.typesense.tls=true"
+      - "traefik.http.routers.typesense.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.typesense.loadbalancer.server.port=8108"
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
