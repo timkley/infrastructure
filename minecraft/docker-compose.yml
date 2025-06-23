@@ -12,6 +12,7 @@ services:
       TYPE: "FABRIC"
       MEMORY: "3072M"
       MAX_PLAYERS: "5"
+      RCON_PASSWORD: "${RCON_PASSWORD}"
       TZ: "Europe/Berlin"
       DIFFICULTY: "2"
       LEVEL: "world_polypia"
@@ -39,3 +40,12 @@ services:
     volumes:
       - "./data:/data"
 
+  backups:
+    image: itzg/mc-backup
+    environment:
+      BACKUP_INTERVAL: "12h"
+      RCON_HOST: mc
+      RCON_PASSWORD: "${RCON_PASSWORD}"
+    volumes:
+      - "./data:/data:ro"
+      - "./backups:/backups"
