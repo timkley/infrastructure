@@ -46,6 +46,7 @@ services:
       BACKUP_INTERVAL: "12h"
       RCON_HOST: mc
       RCON_PASSWORD: "${RCON_PASSWORD}"
+      TZ: "Europe/Berlin"
     volumes:
       - "./data:/data:ro"
       - "./backups:/backups"
