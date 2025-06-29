@@ -72,6 +72,8 @@ services:
     restart: always
     volumes:
       - log:/unifi/log
+    labels:
+      - "traefik.enable=false"
 
 volumes:
   db:

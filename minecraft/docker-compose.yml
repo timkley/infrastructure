@@ -50,3 +50,5 @@ services:
     volumes:
       - "./data:/data:ro"
       - "./backups:/backups"
+    labels:
+      - "traefik.enable=false"
