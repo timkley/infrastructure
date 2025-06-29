@@ -1,7 +1,5 @@
 [http.middlewares.simpleAuth.basicAuth]
-  users = [
-    "admin:$apr1$k0ajpxue$TjnHftvZjDWYd4GKUVEV6."
-  ]
+  usersfile = "./usersfile"
 
 [http.routers.api]
   rule = "Host(`traefik.timkley.dev`)"
