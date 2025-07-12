@@ -3,6 +3,7 @@ services:
     image: itzg/minecraft-server:latest
     tty: true
     stdin_open: true
+    restart: "unless-stopped"
     ports:
       - "25565:25565"
     environment:
@@ -32,6 +33,7 @@ services:
         inventory-totem
         just-mob-heads
         shulker-drops-two
+        waystones
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
       MODRINTH_ALLOWED_VERSION_TYPE: "alpha"
       SPAWN_PROTECTION: "0"
