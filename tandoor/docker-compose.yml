@@ -1,0 +1,39 @@
+services:
+  db_recipes:
+    restart: always
+    image: postgres:16-alpine
+    volumes:
+      - ./postgresql:/var/lib/postgresql/data
+    env_file:
+      - ./.env
+    networks:
+      - backend
+
+  web_recipes:
+    restart: always
+    image: vabene1111/recipes
+    env_file:
+      - ./.env
+    volumes:
+      - staticfiles:/opt/recipes/staticfiles
+      - ./mediafiles:/opt/recipes/mediafiles
+    depends_on:
+      - db_recipes
+    labels: # traefik example labels
+      - "traefik.enable=true"
+      - "traefik.http.routers.tandoor.rule=Host(`tandoor.timkley.dev`)"
+      - "traefik.http.routers.tandoor.tls=true"
+      - "traefik.http.routers.tandoor.tls.certresolver=lets-encrypt"
+    networks:
+      - web
+      - backend
+
+
+networks:
+  backend:
+    external: false
+  web:
+    external: true
+
+volumes:
+  staticfiles:
