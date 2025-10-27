@@ -1,7 +1,6 @@
 services:
   beszel:
     image: henrygd/beszel:latest
-    container_name: beszel
     restart: unless-stopped
     volumes:
       - ./beszel_data:/beszel_data
@@ -10,13 +9,12 @@ services:
       - web
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.beszel.rule=Host(`beszel.timkley.dev`)"
-      - "traefik.http.routers.beszel.tls=true"
-      - "traefik.http.services.beszel.loadbalancer.server.port=8090"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8090"
 
   beszel-agent:
     image: henrygd/beszel-agent:latest
-    container_name: beszel-agent
     restart: unless-stopped
     network_mode: host
     volumes:
