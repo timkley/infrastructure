@@ -1,16 +1,6 @@
 services:
-  db_recipes:
-    restart: always
-    image: postgres:16-alpine
-    volumes:
-      - ./postgresql:/var/lib/postgresql/data
-    env_file:
-      - ./.env
-    networks:
-      - backend
-
-  web_recipes:
-    restart: always
+  app:
+    restart: unless-stopped
     image: vabene1111/recipes
     env_file:
       - ./.env
@@ -18,19 +8,24 @@ services:
       - staticfiles:/opt/recipes/staticfiles
       - ./mediafiles:/opt/recipes/mediafiles
     depends_on:
-      - db_recipes
+      - db
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.tandoor.rule=Host(`tandoor.timkley.dev`)"
-      - "traefik.http.routers.tandoor.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
     networks:
       - web
-      - backend
+      - default
 
+  db:
+    restart: unless-stopped
+    image: postgres:16-alpine
+    volumes:
+      - ./postgresql:/var/lib/postgresql/data
+    env_file:
+      - ./.env
 
 networks:
-  backend:
-    external: false
   web:
     external: true
 
