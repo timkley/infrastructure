@@ -29,6 +29,7 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8000"
     networks:
+      - default
       - web
   broker:
     image: docker.io/library/redis:7
