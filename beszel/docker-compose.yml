@@ -1,5 +1,5 @@
 services:
-  beszel:
+  app:
     image: henrygd/beszel:latest
     restart: unless-stopped
     volumes:
@@ -13,7 +13,7 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8090"
 
-  beszel-agent:
+  agent:
     image: henrygd/beszel-agent:latest
     restart: unless-stopped
     network_mode: host
