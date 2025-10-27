@@ -11,6 +11,7 @@ services:
       - ./acme.json:/etc/traefik/acme.json
       - ./traefik.toml:/etc/traefik/traefik.toml:ro
       - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
+      - ./usersfile:/etc/traefik/usersfile:ro
     restart: always
     networks:
       - web

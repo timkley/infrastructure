@@ -1,5 +1,5 @@
 [http.middlewares.simpleAuth.basicAuth]
-  usersfile = "./usersfile"
+  usersfile = "/etc/traefik/usersfile"
 
 [http.routers.api]
   rule = "Host(`traefik.timkley.dev`)"
