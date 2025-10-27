@@ -1,5 +1,5 @@
 services:
-  typesense:
+  app:
     image: typesense/typesense:28.0
     restart: unless-stopped
     volumes:
@@ -7,9 +7,9 @@ services:
     command: '--data-dir /data --api-key=${API_KEY} --enable-cors'
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.typesense.rule=Host(`typesense.timkley.dev`)"
-      - "traefik.http.routers.typesense.tls=true"
-      - "traefik.http.services.typesense.loadbalancer.server.port=8108"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8108"
     networks:
       - web
 
