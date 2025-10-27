@@ -12,7 +12,6 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.beszel.rule=Host(`beszel.timkley.dev`)"
       - "traefik.http.routers.beszel.tls=true"
-      - "traefik.http.routers.beszel.tls.certresolver=lets-encrypt"
       - "traefik.http.services.beszel.loadbalancer.server.port=8090"
 
   beszel-agent:

@@ -19,11 +19,10 @@ services:
       - ./mediafiles:/opt/recipes/mediafiles
     depends_on:
       - db_recipes
-    labels: # traefik example labels
+    labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tandoor.rule=Host(`tandoor.timkley.dev`)"
       - "traefik.http.routers.tandoor.tls=true"
-      - "traefik.http.routers.tandoor.tls.certresolver=lets-encrypt"
     networks:
       - web
       - backend

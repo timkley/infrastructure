@@ -9,7 +9,6 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.typesense.rule=Host(`typesense.timkley.dev`)"
       - "traefik.http.routers.typesense.tls=true"
-      - "traefik.http.routers.typesense.tls.certresolver=lets-encrypt"
       - "traefik.http.services.typesense.loadbalancer.server.port=8108"
     networks:
       - web

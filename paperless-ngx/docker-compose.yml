@@ -41,7 +41,6 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.paperless.rule=Host(`paperless.timkley.dev`)"
       - "traefik.http.routers.paperless.tls=true"
-      - "traefik.http.routers.paperless.tls.certresolver=lets-encrypt"
       - "traefik.http.services.paperless.loadbalancer.server.port=8000"
     networks:
       - web

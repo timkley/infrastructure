@@ -7,6 +7,8 @@
 
   [entryPoints.websecure]
     address = ":443"
+    [entryPoints.websecure.http.tls]
+      certResolver = "lets-encrypt"
 
 [api]
   dashboard = true
@@ -19,6 +21,7 @@
 [providers.docker]
   watch = true
   network = "web"
+  exposedByDefault = false
 
 [providers.file]
   filename = "/etc/traefik/traefik_dynamic.toml"
