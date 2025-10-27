@@ -1,23 +1,13 @@
 services:
-  mongo:
-    image: mongo:3.6
-    container_name: unifi_mongo
-    networks:
-      - unifi
-    restart: always
-    volumes:
-      - db:/data/db
-      - dbcfg:/data/configdb
-  controller:
+  app:
     image: "jacobalberty/unifi:${TAG:-latest}"
-    container_name: unifi_controller
     depends_on:
-      - mongo
+      - db
     init: true
     networks:
-      - unifi
+      - default
       - web
-    restart: always
+    restart: unless-stopped
     volumes:
       - dir:/unifi
       - data:/unifi/data
@@ -31,8 +21,8 @@ services:
     sysctls:
       net.ipv4.ip_unprivileged_port_start: 0
     environment:
-      DB_URI: mongodb://mongo/unifi
-      STATDB_URI: mongodb://mongo/unifi_stat
+      DB_URI: mongodb://db/unifi
+      STATDB_URI: mongodb://db/unifi_stat
       DB_NAME: unifi
     ports:
       - "3478:3478/udp" # STUN
@@ -44,35 +34,37 @@ services:
       - "10001:10001/udp" # AP discovery
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.unifi.entrypoints=web"
-      - "traefik.http.routers.unifi.rule=Host(`unifi.timkley.dev`)"
-      - "traefik.http.middlewares.unifi-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.routers.unifi.middlewares=unifi-https-redirect"
-      - "traefik.http.routers.unifi-secure.entrypoints=websecure"
-      - "traefik.http.routers.unifi-secure.rule=Host(`unifi.timkley.dev`)"
-      - "traefik.http.routers.unifi-secure.tls=true"
-      - "traefik.http.routers.unifi-secure.service=unifi"
-      - "traefik.http.services.unifi.loadbalancer.server.port=8443"
-      - "traefik.http.services.unifi.loadbalancer.server.scheme=https"
-      - "traefik.http.services.unifi.loadbalancer.serverstransport=insecureskipverify@file"
-      - "traefik.http.middlewares.unifi-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
-      - "traefik.http.middlewares.unifi-headers.headers.customrequestheaders.X-Forwarded-Port=443"
-      - "traefik.http.middlewares.unifi-headers.headers.customrequestheaders.X-Real-IP={{ .RemoteAddr }}"
-      - "traefik.http.routers.unifi-secure.middlewares=unifi-headers"
-      - "traefik.http.middlewares.unifi-compress.compress=true"
-      - "traefik.http.routers.unifi-secure.middlewares=unifi-headers,unifi-compress"
-      - "traefik.docker.network=web"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=web"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.middlewares=${COMPOSE_PROJECT_NAME}-https-redirect"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.service=${COMPOSE_PROJECT_NAME}"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8443"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.scheme=https"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.serverstransport=insecureskipverify@file"
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-headers.headers.customrequestheaders.X-Forwarded-Port=443"
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-headers.headers.customrequestheaders.X-Real-IP={{ .RemoteAddr }}"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-headers"
+      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-compress.compress=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-headers,${COMPOSE_PROJECT_NAME}-compress"
+  db:
+    image: mongo:3.6
+    restart: always
+    volumes:
+      - db:/data/db
+      - dbcfg:/data/configdb
   logs:
     image: bash
-    container_name: unifi_logs
     depends_on:
-      - controller
+      - app
     command: bash -c 'tail -F /unifi/log/*.log'
     restart: always
     volumes:
       - log:/unifi/log
-    labels:
-      - "traefik.enable=false"
 
 volumes:
   db:
@@ -85,6 +77,5 @@ volumes:
   run:
 
 networks:
-  unifi:
   web:
     external: true
