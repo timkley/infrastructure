@@ -7,6 +7,7 @@ services:
     volumes:
       - staticfiles:/opt/recipes/staticfiles
       - ./mediafiles:/opt/recipes/mediafiles
+      - ./database/db.sqlite3:/opt/recipes/db.sqlite3
     depends_on:
       - db
     labels:
