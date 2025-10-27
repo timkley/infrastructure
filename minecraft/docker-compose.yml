@@ -16,7 +16,7 @@ services:
       RCON_PASSWORD: "${RCON_PASSWORD}"
       TZ: "Europe/Berlin"
       DIFFICULTY: "2"
-      LEVEL: "world_polypia"
+      LEVEL: "${WORLD}"
       OPS: |-
         timkley
       ENABLE_WHITELIST: "true"
