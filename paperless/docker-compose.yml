@@ -1,9 +1,3 @@
-# All compose files of paperless configure paperless in the following way:
-#
-# - Paperless listens on port 8000.
-#
-# SQLite is used as the database. The SQLite file is stored in the data volume.
-#
 # To install and update paperless with this file, do the following:
 #
 # - Copy this file as 'docker-compose.yml' and the files 'docker-compose.env'
@@ -16,15 +10,7 @@
 # documentation.
 
 services:
-  broker:
-    image: docker.io/library/redis:7
-    restart: unless-stopped
-    volumes:
-      - ./paperless_redisdata:/data
-    networks:
-      - backend
-
-  webserver:
+  app:
     image: ghcr.io/paperless-ngx/paperless-ngx:latest
     restart: unless-stopped
     depends_on:
@@ -34,20 +20,22 @@ services:
       - ./paperless_media:/usr/src/paperless/media
       - ./export:/usr/src/paperless/export
       - ./consume:/usr/src/paperless/consume
-    env_file: docker-compose.env
+    env_file: .env
     environment:
       PAPERLESS_REDIS: redis://broker:6379
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.paperless.rule=Host(`paperless.timkley.dev`)"
-      - "traefik.http.routers.paperless.tls=true"
-      - "traefik.http.services.paperless.loadbalancer.server.port=8000"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8000"
     networks:
       - web
-      - backend
+  broker:
+    image: docker.io/library/redis:7
+    restart: unless-stopped
+    volumes:
+      - ./paperless_redisdata:/data
 
 networks:
-  backend:
-    external: false
   web:
     external: true
