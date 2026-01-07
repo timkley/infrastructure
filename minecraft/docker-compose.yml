@@ -8,7 +8,7 @@ services:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      VERSION: "1.21.11"
+      VERSION: "1.21.10"
       ENABLE_STATUS: "true"
       TYPE: "FABRIC"
       MEMORY: "3072M"
