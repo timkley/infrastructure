@@ -1,17 +1,22 @@
 services:
   gateway:
-    image: ${CLAWDBOT_IMAGE:-ghcr.io/clawdbot/clawdbot:latest}
+    image: ${CLAWDBOT_IMAGE:-clawdbot:local}
+    build:
+      context: ${CLAWDBOT_REPO_PATH:-.}
+      dockerfile: Dockerfile
     restart: unless-stopped
     init: true
     volumes:
-      - ./config:/home/node/.clawdbot
-      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/workspace
+      - ${CLAWDBOT_CONFIG_DIR:-./config}:/home/node/.clawdbot
+      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/home/node/clawd
     networks:
       - web
     environment:
       - HOME=/home/node
       - TERM=xterm-256color
       - TZ=Europe/Berlin
+      - XDG_CONFIG_HOME=/home/node/.clawdbot
+      - CLAWDBOT_GATEWAY_TOKEN=${CLAWDBOT_GATEWAY_TOKEN}
     command: ["gateway", "--bind", "${CLAWDBOT_GATEWAY_BIND:-lan}", "--port", "18789"]
     labels:
       - "traefik.enable=true"
@@ -22,19 +27,20 @@ services:
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=18789"
 
   cli:
-    image: ${CLAWDBOT_IMAGE:-ghcr.io/clawdbot/clawdbot:latest}
+    image: ${CLAWDBOT_IMAGE:-clawdbot:local}
     profiles: ["cli"]
     init: true
     stdin_open: true
     tty: true
     volumes:
-      - ./config:/home/node/.clawdbot
-      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/workspace
+      - ${CLAWDBOT_CONFIG_DIR:-./config}:/home/node/.clawdbot
+      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/home/node/clawd
     environment:
       - HOME=/home/node
       - TERM=xterm-256color
       - BROWSER=echo
       - TZ=Europe/Berlin
+      - XDG_CONFIG_HOME=/home/node/.clawdbot
     entrypoint: ["node", "dist/index.js"]
 
 networks:

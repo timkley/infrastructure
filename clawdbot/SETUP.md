@@ -2,6 +2,16 @@
 
 Clawdbot is a personal AI assistant gateway that bridges messaging platforms (WhatsApp, Telegram, Discord) to AI agents like Claude.
 
+## Prerequisites: Clone the Clawdbot Repository
+
+The Docker image must be built locally from the clawdbot source code. Clone it to `/opt/clawdbot`:
+
+```bash
+git clone https://github.com/anthropics/clawdbot.git /opt/clawdbot
+```
+
+This path is referenced in `.env` as `CLAWDBOT_REPO_PATH`. Keep it consistent to make upgrades easy.
+
 ## Security Architecture
 
 ```
@@ -22,7 +32,7 @@ Clawdbot is a personal AI assistant gateway that bridges messaging platforms (Wh
 │  LAYER 2: Gateway Token Authentication                              │
 │  • WebSocket clients must send token in connect handshake           │
 │  • Control UI requires token to access                              │
-│  • Token stored in clawdbot.json (not in git)                       │
+│  • Token set via CLAWDBOT_GATEWAY_TOKEN env var                     │
 └─────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
@@ -43,37 +53,30 @@ cd clawdbot
 cp .env.example .env
 ```
 
-### Step 2: Create Gateway Config
-
-Create `config/clawdbot.json`:
-
-```json
-{
-  "gateway": {
-    "port": 18789,
-    "auth": {
-      "mode": "token",
-      "token": "GENERATE_WITH_openssl_rand_-base64_32"
-    },
-    "controlUi": {
-      "enabled": true
-    }
-  },
-  "agent": {
-    "workspace": "/workspace"
-  }
-}
-```
-
-Generate a secure token:
+Edit `.env` and set:
 
 ```bash
-openssl rand -base64 32
+# Path to cloned clawdbot repository
+CLAWDBOT_REPO_PATH=/path/to/clawdbot
+
+# Generate a secure token
+CLAWDBOT_GATEWAY_TOKEN=$(openssl rand -hex 32)
 ```
 
-### Step 3: Start the Gateway
+### Step 2: Create Persistent Directories
 
 ```bash
+mkdir -p config workspace
+chown -R 1000:1000 config workspace
+```
+
+### Step 3: Build and Start the Gateway
+
+```bash
+# Build the image from the clawdbot repo
+docker compose build gateway
+
+# Start the gateway
 docker compose up -d gateway
 docker compose logs -f gateway
 ```
@@ -101,7 +104,6 @@ If `setup-token` doesn't work, use an API key instead.
 
 ```json
 {
-  "gateway": { ... },
   "models": {
     "providers": {
       "anthropic": {
@@ -112,11 +114,17 @@ If `setup-token` doesn't work, use an API key instead.
 }
 ```
 
-**Option B:** Add environment variable in `docker-compose.yml`:
+**Option B:** Add environment variable to `.env`:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Then add to docker-compose.yml gateway environment:
 
 ```yaml
 environment:
-  - ANTHROPIC_API_KEY=sk-ant-...
+  - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 ```
 
 ### Step 5: Link WhatsApp
@@ -129,23 +137,10 @@ Scan the QR code with: **WhatsApp → Settings → Linked Devices → Link a Dev
 
 ### Step 6: Configure WhatsApp Access Control
 
-Update `config/clawdbot.json`:
+Create or update `config/clawdbot.json`:
 
 ```json
 {
-  "gateway": {
-    "port": 18789,
-    "auth": {
-      "mode": "token",
-      "token": "your-token"
-    },
-    "controlUi": {
-      "enabled": true
-    }
-  },
-  "agent": {
-    "workspace": "/workspace"
-  },
   "channels": {
     "whatsapp": {
       "dmPolicy": "pairing",
@@ -198,7 +193,7 @@ docker compose run --rm cli channels add --channel discord --token "BOT_TOKEN"
 
 - [ ] Container running: `docker compose ps` shows gateway healthy
 - [ ] Traefik routing: `https://clawdbot.timkley.dev` loads (prompts for token)
-- [ ] Claude connected: `docker compose run --rm cli clawdbot models status`
+- [ ] Health check: `docker compose exec gateway node dist/index.js health --token "$CLAWDBOT_GATEWAY_TOKEN"`
 - [ ] WhatsApp linked: `docker compose run --rm cli channels status`
 - [ ] End-to-end test: Send WhatsApp message, receive AI response
 
@@ -221,4 +216,30 @@ docker compose run --rm cli clawdbot doctor
 
 ```bash
 docker compose restart gateway
+```
+
+## Upgrading Clawdbot
+
+To update to the latest version, pull the repo, rebuild the image, and restart:
+
+```bash
+cd /opt/clawdbot && git pull && cd - && docker compose build --no-cache gateway && docker compose up -d gateway
+```
+
+Or step by step:
+
+```bash
+# 1. Update the source code
+cd /opt/clawdbot
+git pull
+
+# 2. Rebuild the Docker image
+cd /path/to/infrastructure/clawdbot
+docker compose build --no-cache gateway
+
+# 3. Restart with new image
+docker compose up -d gateway
+
+# 4. Verify
+docker compose logs -f gateway
 ```
