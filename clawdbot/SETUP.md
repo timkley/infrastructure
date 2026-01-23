@@ -74,6 +74,7 @@ Create `config/clawdbot.json`:
 ```json
 {
   "gateway": {
+    "mode": "local",
     "port": 18789,
     "controlUi": {
       "enabled": true
