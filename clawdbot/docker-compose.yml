@@ -1,14 +1,16 @@
 services:
-  gateway:
+  clawdbot-gateway:
     image: ${CLAWDBOT_IMAGE:-clawdbot:local}
     build:
       context: ${CLAWDBOT_REPO_PATH:-.}
       dockerfile: Dockerfile
     restart: unless-stopped
     init: true
+    ports:
+      - "18789:18789"
     volumes:
-      - ${CLAWDBOT_CONFIG_DIR:-./config}:/home/node/.clawdbot
-      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/home/node/clawd
+      - ${CLAWDBOT_CONFIG_DIR:-~/.clawdbot}:/home/node/.clawdbot
+      - ${CLAWDBOT_WORKSPACE_DIR:-~/clawd}:/home/node/clawd
     networks:
       - web
     environment:
@@ -16,6 +18,7 @@ services:
       - TERM=xterm-256color
       - TZ=Europe/Berlin
       - XDG_CONFIG_HOME=/home/node/.clawdbot
+      - CLAWDBOT_GATEWAY_TOKEN=${CLAWDBOT_GATEWAY_TOKEN:-}
     command: ["node", "dist/index.js", "gateway", "--bind", "${CLAWDBOT_GATEWAY_BIND:-lan}", "--port", "18789"]
     labels:
       - "traefik.enable=true"
@@ -25,15 +28,15 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=lets-encrypt"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=18789"
 
-  cli:
+  clawdbot-cli:
     image: ${CLAWDBOT_IMAGE:-clawdbot:local}
     profiles: ["cli"]
     init: true
     stdin_open: true
     tty: true
     volumes:
-      - ${CLAWDBOT_CONFIG_DIR:-./config}:/home/node/.clawdbot
-      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/home/node/clawd
+      - ${CLAWDBOT_CONFIG_DIR:-~/.clawdbot}:/home/node/.clawdbot
+      - ${CLAWDBOT_WORKSPACE_DIR:-~/clawd}:/home/node/clawd
     environment:
       - HOME=/home/node
       - TERM=xterm-256color
