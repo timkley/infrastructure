@@ -7,7 +7,7 @@ Clawdbot is a personal AI assistant gateway that bridges messaging platforms (Wh
 The Docker image must be built locally from the clawdbot source code. Clone it to `/opt/clawdbot`:
 
 ```bash
-git clone https://github.com/anthropics/clawdbot.git /opt/clawdbot
+git clone https://github.com/clawdbot/clawdbot.git /opt/clawdbot
 ```
 
 This path is referenced in `.env` as `CLAWDBOT_REPO_PATH`. Keep it consistent to make upgrades easy.
@@ -56,11 +56,8 @@ cp .env.example .env
 Edit `.env` and set:
 
 ```bash
-# Path to cloned clawdbot repository
-CLAWDBOT_REPO_PATH=/path/to/clawdbot
-
-# Generate a secure token
-CLAWDBOT_GATEWAY_TOKEN=$(openssl rand -hex 32)
+# Generate a secure token and add it to .env
+echo "CLAWDBOT_GATEWAY_TOKEN=$(openssl rand -hex 32)" >> .env
 ```
 
 ### Step 2: Create Persistent Directories
@@ -70,7 +67,29 @@ mkdir -p config workspace
 chown -R 1000:1000 config workspace
 ```
 
-### Step 3: Build and Start the Gateway
+### Step 3: Create Gateway Config
+
+Create `config/clawdbot.json`:
+
+```json
+{
+  "gateway": {
+    "port": 18789,
+    "controlUi": {
+      "enabled": true
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/home/node/clawd"
+    }
+  }
+}
+```
+
+Note: The gateway token is read from the `CLAWDBOT_GATEWAY_TOKEN` environment variable (set in `.env`), not from this config file.
+
+### Step 5: Build and Start the Gateway
 
 ```bash
 # Build the image from the clawdbot repo
@@ -83,7 +102,7 @@ docker compose logs -f gateway
 
 Access Control UI at `https://clawdbot.timkley.dev` (requires your token).
 
-### Step 4: Set Up Claude Code Authentication
+### Step 6: Set Up Claude Code Authentication
 
 ```bash
 docker compose run --rm cli bash
@@ -127,7 +146,7 @@ environment:
   - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 ```
 
-### Step 5: Link WhatsApp
+### Step 7: Link WhatsApp
 
 ```bash
 docker compose run --rm cli channels login
@@ -135,12 +154,14 @@ docker compose run --rm cli channels login
 
 Scan the QR code with: **WhatsApp → Settings → Linked Devices → Link a Device**
 
-### Step 6: Configure WhatsApp Access Control
+### Step 8: Configure WhatsApp Access Control
 
-Create or update `config/clawdbot.json`:
+Add channels config to `config/clawdbot.json`:
 
 ```json
 {
+  "gateway": { ... },
+  "agents": { ... },
   "channels": {
     "whatsapp": {
       "dmPolicy": "pairing",
@@ -163,7 +184,7 @@ Create or update `config/clawdbot.json`:
 | `allowFrom: ["+49..."]` | Only these numbers can message (skip pairing) |
 | `groups.*.requireMention` | In groups, bot only responds when @mentioned |
 
-### Step 7: Restart and Test
+### Step 9: Restart and Test
 
 ```bash
 docker compose restart gateway
