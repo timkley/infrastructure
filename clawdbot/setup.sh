@@ -57,24 +57,28 @@ echo ""
 echo "Running onboard wizard..."
 echo -e "${YELLOW}Please follow the prompts to configure your gateway${NC}"
 echo ""
+echo "After the wizard completes, you'll be asked to paste the generated token."
+echo ""
 
-# Run onboard and capture output
-ONBOARD_OUTPUT=$(docker compose run --rm clawdbot-cli onboard --no-install-daemon 2>&1 | tee /dev/tty)
+# Run onboard interactively
+docker compose run --rm clawdbot-cli onboard --no-install-daemon
 
-# Extract token from output
-# The onboard command should output the token, we'll look for it
-TOKEN=$(echo "$ONBOARD_OUTPUT" | grep -oP 'token["\s:]+\K[A-Za-z0-9+/=]{32,}' | head -1)
+# Prompt user to paste the token
+echo ""
+echo "The onboard wizard should have displayed a gateway token."
+echo "Please paste the token here (it will be saved to .env):"
+read -r TOKEN
 
 if [ -z "$TOKEN" ]; then
     echo ""
-    echo -e "${YELLOW}Warning: Could not automatically extract token from onboard output${NC}"
-    echo "Please check the output above for the generated token and add it to .env manually:"
+    echo -e "${RED}Error: No token provided${NC}"
+    echo "Please add the token to .env manually:"
     echo ""
     echo "  CLAWDBOT_GATEWAY_TOKEN=your-token-here"
     echo ""
     echo "Then start the gateway with:"
     echo "  docker compose up -d clawdbot-gateway"
-    exit 0
+    exit 1
 fi
 
 # Save token to .env
