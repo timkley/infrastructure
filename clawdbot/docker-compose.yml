@@ -16,7 +16,6 @@ services:
       - TERM=xterm-256color
       - TZ=Europe/Berlin
       - XDG_CONFIG_HOME=/home/node/.clawdbot
-      - CLAWDBOT_GATEWAY_TOKEN=${CLAWDBOT_GATEWAY_TOKEN}
     command: ["node", "dist/index.js", "gateway", "--bind", "${CLAWDBOT_GATEWAY_BIND:-lan}", "--port", "18789"]
     labels:
       - "traefik.enable=true"

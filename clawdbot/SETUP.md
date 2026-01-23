@@ -53,12 +53,7 @@ cd clawdbot
 cp .env.example .env
 ```
 
-Edit `.env` and set:
-
-```bash
-# Generate a secure token and add it to .env
-echo "CLAWDBOT_GATEWAY_TOKEN=$(openssl rand -hex 32)" >> .env
-```
+Edit `.env` if you need to customize paths (defaults should work).
 
 ### Step 2: Create Persistent Directories
 
@@ -76,6 +71,9 @@ Create `config/clawdbot.json`:
   "gateway": {
     "mode": "local",
     "port": 18789,
+    "auth": {
+      "token": "YOUR_TOKEN_HERE"
+    },
     "controlUi": {
       "enabled": true
     }
@@ -88,7 +86,7 @@ Create `config/clawdbot.json`:
 }
 ```
 
-Note: The gateway token is read from the `CLAWDBOT_GATEWAY_TOKEN` environment variable (set in `.env`), not from this config file.
+Generate a secure token with `openssl rand -base64 32` and replace `YOUR_TOKEN_HERE`.
 
 ### Step 5: Build and Start the Gateway
 
