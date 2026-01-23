@@ -17,7 +17,7 @@ services:
       - TZ=Europe/Berlin
       - XDG_CONFIG_HOME=/home/node/.clawdbot
       - CLAWDBOT_GATEWAY_TOKEN=${CLAWDBOT_GATEWAY_TOKEN}
-    command: ["gateway", "--bind", "${CLAWDBOT_GATEWAY_BIND:-lan}", "--port", "18789"]
+    command: ["node", "dist/index.js", "gateway", "--bind", "${CLAWDBOT_GATEWAY_BIND:-lan}", "--port", "18789"]
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
