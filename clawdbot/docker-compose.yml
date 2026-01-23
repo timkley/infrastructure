@@ -1,0 +1,42 @@
+services:
+  gateway:
+    image: ${CLAWDBOT_IMAGE:-ghcr.io/clawdbot/clawdbot:latest}
+    restart: unless-stopped
+    init: true
+    volumes:
+      - ./config:/home/node/.clawdbot
+      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/workspace
+    networks:
+      - web
+    environment:
+      - HOME=/home/node
+      - TERM=xterm-256color
+      - TZ=Europe/Berlin
+    command: ["gateway", "--bind", "${CLAWDBOT_GATEWAY_BIND:-lan}", "--port", "18789"]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=18789"
+
+  cli:
+    image: ${CLAWDBOT_IMAGE:-ghcr.io/clawdbot/clawdbot:latest}
+    profiles: ["cli"]
+    init: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./config:/home/node/.clawdbot
+      - ${CLAWDBOT_WORKSPACE_DIR:-./workspace}:/workspace
+    environment:
+      - HOME=/home/node
+      - TERM=xterm-256color
+      - BROWSER=echo
+      - TZ=Europe/Berlin
+    entrypoint: ["node", "dist/index.js"]
+
+networks:
+  web:
+    external: true
