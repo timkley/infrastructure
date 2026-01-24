@@ -6,7 +6,16 @@ services:
       dockerfile: Dockerfile
     container_name: clawdbot-gateway
     restart: unless-stopped
-    command: ["gateway"]
+    command:
+      [
+        "node",
+        "dist/index.js",
+        "gateway",
+        "--bind",
+        "${CLAWDBOT_GATEWAY_BIND}",
+        "--port",
+        "${CLAWDBOT_GATEWAY_PORT}"
+      ]
     environment:
       - HOME=/home/node
       - NODE_ENV=production

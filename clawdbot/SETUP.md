@@ -64,30 +64,17 @@ echo "Gateway token: $GATEWAY_TOKEN"
 docker compose build
 ```
 
-### Step 7: Run Initial Setup (Onboard Wizard)
-
-Before starting the gateway, run the onboard wizard interactively:
-
-```bash
-docker compose run --rm gateway onboard
-```
-
-Follow the wizard to configure:
-- WhatsApp connection (scan QR code)
-- Gmail OAuth (if needed)
-- Other integrations
-
-### Step 8: Start the Gateway
+### Step 7: Start the Gateway
 
 ```bash
 docker compose up -d
 ```
 
-### Step 9: DNS Configuration
+### Step 8: DNS Configuration
 
 Ensure `clawdbot.timkley.dev` points to your VPS IP (A record).
 
-### Step 10: Verify Deployment
+### Step 9: Verify Deployment
 
 1. Check container is running:
    ```bash
@@ -118,7 +105,7 @@ Ensure `clawdbot.timkley.dev` points to your VPS IP (A record).
 - [ ] Container running: `docker compose ps`
 - [ ] UI accessible: `curl -I https://clawdbot.timkley.dev`
 - [ ] Logs clean: `docker compose logs gateway`
-- [ ] WhatsApp connected: Check UI status
+- [ ] Integrations configured via UI
 
 ## Updating Clawdbot
 
