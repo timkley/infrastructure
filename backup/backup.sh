@@ -27,6 +27,11 @@ source "$SCRIPT_DIR/backup.env"
 log()       { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 log_error() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >&2; ERRORS+=("$*"); }
 
+hc_ping() {
+    [[ -z "${HEALTHCHECK_URL:-}" ]] && return
+    curl -fsS -m 10 --retry 3 "$HEALTHCHECK_URL$1" >/dev/null 2>&1 || true
+}
+
 acquire_lock() {
     if ! mkdir "$LOCK_FILE" 2>/dev/null; then
         echo "Another backup is already running (lock: $LOCK_FILE)." >&2
@@ -155,6 +160,7 @@ main() {
     local services=("${@:-${ALL_SERVICES[@]}}")
 
     log "=== Backup starting: ${services[*]} ==="
+    hc_ping /start
 
     for svc in "${services[@]}"; do
         case "$svc" in
@@ -172,10 +178,12 @@ main() {
     if [[ ${#ERRORS[@]} -gt 0 ]]; then
         log "=== Backup finished with ${#ERRORS[@]} error(s) ==="
         printf '  - %s\n' "${ERRORS[@]}"
+        hc_ping /fail
         exit 1
     fi
 
     log "=== Backup complete ==="
+    hc_ping ""
 }
 
 main "$@"
