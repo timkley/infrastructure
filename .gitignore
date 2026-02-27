@@ -1,3 +1,4 @@
 .env
 docker-compose.env
 data
+backup/backup.env

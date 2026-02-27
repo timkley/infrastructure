@@ -1,0 +1,13 @@
+[Unit]
+Description=Restic backup to Hetzner Storage Box
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/docker/backup/backup.sh
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
