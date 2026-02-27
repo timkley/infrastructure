@@ -57,8 +57,7 @@ backup_paperless() {
     if container_running "$dir" app; then
         log "paperless: creating SQLite .backup copy"
         compose "$dir" exec -T app \
-            sqlite3 /usr/src/paperless/data/db.sqlite3 \
-            ".backup /usr/src/paperless/data/db.sqlite3.backup" \
+            python3 -c "import sqlite3; s=sqlite3.connect('/usr/src/paperless/data/db.sqlite3'); d=sqlite3.connect('/usr/src/paperless/data/db.sqlite3.backup'); s.backup(d); d.close(); s.close()" \
             || log_error "paperless: SQLite .backup failed — backing up live DB"
     else
         log "paperless: container not running, backing up files directly"
