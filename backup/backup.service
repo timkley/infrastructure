@@ -5,7 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+User=admin
 ExecStart=/opt/docker/backup/backup.sh
+Environment=HOME=/home/admin
 Nice=19
 IOSchedulingClass=idle
 

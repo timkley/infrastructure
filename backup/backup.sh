@@ -88,7 +88,7 @@ backup_tandoor() {
     if container_running "$dir" db; then
         log "tandoor: dumping PostgreSQL"
         compose "$dir" exec -T db \
-            sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
+            sh -c 'pg_dump -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-postgres}"' \
             > "$dir/postgresql/backup.sql" \
             || log_error "tandoor: pg_dump failed"
     else
