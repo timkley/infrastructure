@@ -84,20 +84,24 @@ backup_tandoor() {
     local dir="$INFRA_DIR/tandoor"
     log "tandoor: starting backup"
 
-    # Dump Postgres using credentials from the container's own environment
+    # Dump Postgres — write to admin-owned location since postgresql/ is owned by postgres UID
+    local dump_file="$dir/backup_tandoor.sql"
     if container_running "$dir" db; then
         log "tandoor: dumping PostgreSQL"
         compose "$dir" exec -T db \
             sh -c 'pg_dump -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-postgres}"' \
-            > "$dir/postgresql/backup.sql" \
+            > "$dump_file" \
             || log_error "tandoor: pg_dump failed"
     else
         log "tandoor: db container not running, backing up files directly"
     fi
 
+    # pg_dump is the full DB backup — no need for the raw postgresql/ data dir
     restic backup --tag tandoor \
-        "$dir/postgresql" \
+        "$dump_file" \
         "$dir/mediafiles"
+
+    rm -f "$dump_file"
 
     log "tandoor: done"
 }

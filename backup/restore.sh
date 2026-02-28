@@ -73,18 +73,17 @@ EOF
         tandoor)
             cat <<'EOF'
   1. docker compose --project-directory $INFRA_DIR/tandoor down
-  2. Move current data aside:
-       mv $INFRA_DIR/tandoor/postgresql{,.old}
+  2. Restore media files:
        mv $INFRA_DIR/tandoor/mediafiles{,.old}
-  3. Copy restored data:
-       cp -a $RESTORE_DIR/$INFRA_DIR/tandoor/postgresql $INFRA_DIR/tandoor/
        cp -a $RESTORE_DIR/$INFRA_DIR/tandoor/mediafiles $INFRA_DIR/tandoor/
-  4. Start only the database:
+  3. Start only the database:
        docker compose --project-directory $INFRA_DIR/tandoor up -d db
-  5. Restore from SQL dump (if available):
+  4. Restore database from SQL dump:
        docker compose --project-directory $INFRA_DIR/tandoor exec -T db \
-         sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' < $INFRA_DIR/tandoor/postgresql/backup.sql
-  6. docker compose --project-directory $INFRA_DIR/tandoor up -d
+         sh -c 'psql -U "${POSTGRES_USER:-postgres}" "${POSTGRES_DB:-postgres}"' \
+         < $RESTORE_DIR/$INFRA_DIR/tandoor/backup_tandoor.sql
+  5. docker compose --project-directory $INFRA_DIR/tandoor up -d
+  6. Verify, then: rm -rf $INFRA_DIR/tandoor/mediafiles.old
 EOF
             ;;
         unifi)
