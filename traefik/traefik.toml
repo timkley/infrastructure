@@ -19,7 +19,8 @@
 [certificatesResolvers.lets-encrypt.acme]
   email = "timkley@gmail.com"
   storage = "/etc/traefik/acme.json"
-  [certificatesResolvers.lets-encrypt.acme.tlsChallenge]
+  [certificatesResolvers.lets-encrypt.acme.dnsChallenge]
+    provider = "cloudflare"
 
 [providers.docker]
   watch = true
