@@ -1,0 +1,118 @@
+services:
+  app:
+    image: ghcr.io/coollabsio/coolify:latest
+    container_name: coolify
+    restart: unless-stopped
+    working_dir: /var/www/html
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - ./.env:/var/www/html/.env:ro
+      - /data/coolify/ssh:/var/www/html/storage/app/ssh
+      - /data/coolify/applications:/var/www/html/storage/app/applications
+      - /data/coolify/databases:/var/www/html/storage/app/databases
+      - /data/coolify/services:/var/www/html/storage/app/services
+      - /data/coolify/backups:/var/www/html/storage/app/backups
+    environment:
+      - APP_ENV=production
+      - PHP_MEMORY_LIMIT=256M
+    env_file:
+      - ./.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+    healthcheck:
+      test: curl --fail http://127.0.0.1:8080/api/health || exit 1
+      interval: 5s
+      retries: 10
+      timeout: 2s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.coolify.entrypoints=websecure"
+      - "traefik.http.routers.coolify.rule=Host(`coolify.timkley.dev`)"
+      - "traefik.http.routers.coolify.tls=true"
+      - "traefik.http.routers.coolify.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.coolify.loadbalancer.server.port=8080"
+    networks:
+      - web
+      - default
+
+  db:
+    image: postgres:15-alpine
+    container_name: coolify-db
+    restart: unless-stopped
+    volumes:
+      - coolify-db:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-coolify}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE:-coolify}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-coolify} -d ${DB_DATABASE:-coolify}"]
+      interval: 5s
+      retries: 10
+      timeout: 2s
+
+  redis:
+    image: redis:7-alpine
+    container_name: coolify-redis
+    restart: unless-stopped
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - coolify-redis:/data
+    healthcheck:
+      test: redis-cli ping
+      interval: 5s
+      retries: 10
+      timeout: 2s
+
+  realtime:
+    image: ghcr.io/coollabsio/coolify-realtime:1.0.11
+    container_name: coolify-realtime
+    restart: unless-stopped
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - /data/coolify/ssh:/var/www/html/storage/app/ssh
+    environment:
+      APP_NAME: Coolify
+      SOKETI_DEBUG: "false"
+      SOKETI_DEFAULT_APP_ID: ${PUSHER_APP_ID}
+      SOKETI_DEFAULT_APP_KEY: ${PUSHER_APP_KEY}
+      SOKETI_DEFAULT_APP_SECRET: ${PUSHER_APP_SECRET}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6001/ready && wget -qO- http://127.0.0.1:6002/ready || exit 1"]
+      interval: 5s
+      retries: 10
+      timeout: 2s
+    labels:
+      - "traefik.enable=true"
+      # Realtime websocket
+      - "traefik.http.routers.coolify-realtime.entrypoints=websecure"
+      - "traefik.http.routers.coolify-realtime.rule=Host(`coolify.timkley.dev`) && PathPrefix(`/app`)"
+      - "traefik.http.routers.coolify-realtime.tls=true"
+      - "traefik.http.routers.coolify-realtime.tls.certresolver=lets-encrypt"
+      - "traefik.http.routers.coolify-realtime.service=coolify-realtime"
+      - "traefik.http.services.coolify-realtime.loadbalancer.server.port=6001"
+      # Terminal websocket
+      - "traefik.http.routers.coolify-terminal.entrypoints=websecure"
+      - "traefik.http.routers.coolify-terminal.rule=Host(`coolify.timkley.dev`) && PathPrefix(`/terminal/ws`)"
+      - "traefik.http.routers.coolify-terminal.tls=true"
+      - "traefik.http.routers.coolify-terminal.tls.certresolver=lets-encrypt"
+      - "traefik.http.routers.coolify-terminal.service=coolify-terminal"
+      - "traefik.http.services.coolify-terminal.loadbalancer.server.port=6002"
+    networks:
+      - web
+      - default
+
+volumes:
+  coolify-db:
+  coolify-redis:
+
+networks:
+  web:
+    external: true
