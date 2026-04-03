@@ -15,12 +15,22 @@ if [ ! -f "$SSH_KEY" ]; then
     ssh-keygen -t ed25519 -f "$SSH_KEY" -q -N "" -C "coolify"
     chown 9999:root "$SSH_KEY" "$SSH_KEY.pub"
 
-    # Add public key to root's authorized_keys
+    # Add public key to authorized_keys for root
     mkdir -p /root/.ssh
     chmod 700 /root/.ssh
     cat "$SSH_KEY.pub" >> /root/.ssh/authorized_keys
     chmod 600 /root/.ssh/authorized_keys
-    echo "SSH key generated and added to root's authorized_keys."
+
+    # Also add for the sudo-invoking user if applicable
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        SUDO_USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+        mkdir -p "$SUDO_USER_HOME/.ssh"
+        chmod 700 "$SUDO_USER_HOME/.ssh"
+        cat "$SSH_KEY.pub" >> "$SUDO_USER_HOME/.ssh/authorized_keys"
+        chmod 600 "$SUDO_USER_HOME/.ssh/authorized_keys"
+        chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$SUDO_USER_HOME/.ssh"
+    fi
+    echo "SSH key generated and added to authorized_keys."
 else
     echo "SSH key already exists, skipping."
 fi
