@@ -11,3 +11,15 @@
 
 [http.serversTransports.insecureskipverify]
   insecureSkipVerify = true
+
+# Native PHP sites (FrankenPHP via Octane)
+[http.routers.bruderwo]
+  rule = "Host(`bruderwo.timkley.dev`)"
+  entrypoints = ["websecure"]
+  service = "bruderwo"
+  [http.routers.bruderwo.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.bruderwo.loadBalancer]
+  [[http.services.bruderwo.loadBalancer.servers]]
+    url = "http://host.docker.internal:8001"
