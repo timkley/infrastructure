@@ -12,7 +12,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./acme.json:/etc/traefik/acme.json
       - ./traefik.toml:/etc/traefik/traefik.toml:ro
-      - ./traefik_dynamic.toml:/etc/traefik/traefik_dynamic.toml:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
       - ./usersfile:/etc/traefik/usersfile:ro
     environment:
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}

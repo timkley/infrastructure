@@ -28,7 +28,8 @@
   exposedByDefault = false
 
 [providers.file]
-  filename = "/etc/traefik/traefik_dynamic.toml"
+  directory = "/etc/traefik/dynamic/"
+  watch = true
 
 [experimental.plugins.headerauthentication]
   moduleName = "github.com/omar-shrbajy-arive/headerauthentication"
