@@ -8,7 +8,7 @@ services:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      VERSION: "26.1.1"
+      VERSION: "1.21.11"
       ENABLE_STATUS: "true"
       TYPE: "FABRIC"
       MEMORY: "3072M"
@@ -34,6 +34,7 @@ services:
         just-mob-heads
         shulker-drops-two
         # waystones
+        biomes-o-plenty
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
       MODRINTH_ALLOWED_VERSION_TYPE: "alpha"
       SPAWN_PROTECTION: "0"
