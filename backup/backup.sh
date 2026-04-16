@@ -139,6 +139,16 @@ backup_traefik() {
     log "traefik: done"
 }
 
+backup_couchdb() {
+    local dir="$INFRA_DIR/couchdb"
+    log "couchdb: starting backup"
+
+    restic backup --tag couchdb \
+        "$dir/data"
+
+    log "couchdb: done"
+}
+
 # ---------------------------------------------------------------------------
 # Retention policy: daily 7, weekly 4, monthly 6
 # ---------------------------------------------------------------------------
@@ -156,7 +166,7 @@ apply_retention() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-ALL_SERVICES=(paperless tandoor unifi beszel traefik)
+ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb)
 
 main() {
     acquire_lock
@@ -173,6 +183,7 @@ main() {
             unifi)     backup_unifi     ;;
             beszel)    backup_beszel    ;;
             traefik)   backup_traefik   ;;
+            couchdb)   backup_couchdb   ;;
             *) log_error "Unknown service: $svc" ;;
         esac
     done

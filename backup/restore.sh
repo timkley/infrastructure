@@ -22,7 +22,7 @@ usage() {
     echo "  $0 snapshots [service]           List available snapshots"
     echo "  $0 restore <service> [snapshot]  Restore to temp directory"
     echo ""
-    echo "Services: paperless, tandoor, unifi, beszel, traefik"
+    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb"
     exit 1
 }
 
@@ -91,6 +91,17 @@ EOF
   1. Copy the Unifi autobackup .unf file from the restored directory
   2. In the Unifi web UI: Settings → Backups → Restore
   3. Upload the .unf file
+EOF
+            ;;
+        couchdb)
+            cat <<'EOF'
+  1. docker compose --project-directory $INFRA_DIR/couchdb down
+  2. Move current data aside:
+       mv $INFRA_DIR/couchdb/data{,.old}
+  3. Copy restored data:
+       cp -a $RESTORE_DIR/$INFRA_DIR/couchdb/data $INFRA_DIR/couchdb/
+  4. docker compose --project-directory $INFRA_DIR/couchdb up -d
+  5. Verify, then: rm -rf $INFRA_DIR/couchdb/data.old
 EOF
             ;;
         *)
