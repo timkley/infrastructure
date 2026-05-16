@@ -1,0 +1,10 @@
+[http.routers.blockgradient]
+  rule = "Host(`blockgradient.timkley.dev`)"
+  entrypoints = ["websecure"]
+  service = "blockgradient"
+  [http.routers.blockgradient.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.blockgradient.loadBalancer]
+  [[http.services.blockgradient.loadBalancer.servers]]
+    url = "http://host.docker.internal:8002"

@@ -1,0 +1,22 @@
+[http.routers.bruderwo-reverb]
+  rule = "Host(`bruderwo.timkley.dev`) && PathPrefix(`/app`)"
+  entrypoints = ["websecure"]
+  service = "bruderwo-reverb"
+  priority = 100
+  [http.routers.bruderwo-reverb.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.bruderwo-reverb.loadBalancer]
+  [[http.services.bruderwo-reverb.loadBalancer.servers]]
+    url = "http://host.docker.internal:8081"
+
+[http.routers.bruderwo]
+  rule = "Host(`bruderwo.timkley.dev`)"
+  entrypoints = ["websecure"]
+  service = "bruderwo"
+  [http.routers.bruderwo.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.bruderwo.loadBalancer]
+  [[http.services.bruderwo.loadBalancer.servers]]
+    url = "http://host.docker.internal:8001"

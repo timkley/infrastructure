@@ -19,12 +19,14 @@ services:
       LEVEL: "${WORLD}"
       OPS: |-
         timkley
+        paulipantheri
       ENABLE_WHITELIST: "true"
       WHITELIST: |-
         timkley
         PitBull2709
         paulipantheri
         timkley1
+        Kontheria
       MODRINTH_PROJECTS: |-
         armor-poser
         lithium
@@ -35,6 +37,7 @@ services:
         shulker-drops-two
         # waystones
         biomes-o-plenty
+        xaeros-world-map
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
       MODRINTH_ALLOWED_VERSION_TYPE: "alpha"
       SPAWN_PROTECTION: "0"
