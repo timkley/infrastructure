@@ -22,7 +22,7 @@ usage() {
     echo "  $0 snapshots [service]           List available snapshots"
     echo "  $0 restore <service> [snapshot]  Restore to temp directory"
     echo ""
-    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb"
+    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich"
     exit 1
 }
 
@@ -102,6 +102,30 @@ EOF
        cp -a $RESTORE_DIR/$INFRA_DIR/couchdb/data $INFRA_DIR/couchdb/
   4. docker compose --project-directory $INFRA_DIR/couchdb up -d
   5. Verify, then: rm -rf $INFRA_DIR/couchdb/data.old
+EOF
+            ;;
+        immich)
+            cat <<'EOF'
+  1. docker compose --project-directory $INFRA_DIR/immich down
+  2. Move current data aside:
+       mv $INFRA_DIR/immich/library{,.old}
+       mv $INFRA_DIR/immich/postgres{,.old}
+  3. Copy restored files:
+       cp -a $RESTORE_DIR/$INFRA_DIR/immich/library $INFRA_DIR/immich/
+  4. Load Immich database settings:
+       set -a
+       source $INFRA_DIR/immich/.env
+       set +a
+  5. Create containers and start only Postgres:
+       docker compose --project-directory $INFRA_DIR/immich create
+       docker start immich_postgres
+       sleep 10
+  6. Restore database dump:
+       gunzip --stdout $RESTORE_DIR/$INFRA_DIR/immich/backup_immich.sql.gz \
+       | sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \
+       | docker exec -i immich_postgres psql --dbname="${DB_DATABASE_NAME:-immich}" --username="${DB_USERNAME:-postgres}" --single-transaction --set ON_ERROR_STOP=on
+  7. docker compose --project-directory $INFRA_DIR/immich up -d
+  8. Verify, then: rm -rf $INFRA_DIR/immich/library.old $INFRA_DIR/immich/postgres.old
 EOF
             ;;
         *)

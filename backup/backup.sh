@@ -2,7 +2,7 @@
 #
 # backup.sh — Back up Docker service data to Hetzner Storage Box via restic
 #
-# Backs up: paperless, tandoor, unifi, beszel, traefik
+# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich
 # Run manually:  ./backup.sh
 # Run one service: ./backup.sh paperless
 #
@@ -149,6 +149,40 @@ backup_couchdb() {
     log "couchdb: done"
 }
 
+backup_immich() {
+    local dir="$INFRA_DIR/immich"
+    local dump_file="$dir/backup_immich.sql.gz"
+    log "immich: starting backup"
+
+    if [[ ! -d "$dir/library" ]]; then
+        log_error "immich: library directory missing at $dir/library"
+        return
+    fi
+
+    if ! container_running "$dir" database; then
+        log_error "immich: database container is not running; refusing incomplete backup"
+        return
+    fi
+
+    log "immich: dumping PostgreSQL"
+    if ! compose "$dir" exec -T database \
+        sh -c 'pg_dump --clean --if-exists --dbname="${POSTGRES_DB:-immich}" --username="${POSTGRES_USER:-postgres}"' \
+        | gzip > "$dump_file"; then
+        rm -f "$dump_file"
+        log_error "immich: pg_dump failed"
+        return
+    fi
+
+    # Back up database first, then files, matching Immich's recommended ordering.
+    restic backup --tag immich \
+        "$dump_file" \
+        "$dir/library"
+
+    rm -f "$dump_file"
+
+    log "immich: done"
+}
+
 # ---------------------------------------------------------------------------
 # Retention policy: daily 7, weekly 4, monthly 6
 # ---------------------------------------------------------------------------
@@ -166,7 +200,7 @@ apply_retention() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb)
+ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich)
 
 main() {
     acquire_lock
@@ -184,6 +218,7 @@ main() {
             beszel)    backup_beszel    ;;
             traefik)   backup_traefik   ;;
             couchdb)   backup_couchdb   ;;
+            immich)    backup_immich    ;;
             *) log_error "Unknown service: $svc" ;;
         esac
     done
