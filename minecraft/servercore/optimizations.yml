@@ -1,0 +1,5 @@
+reduce-sync-loads: true
+cache-ticking-chunks: true
+optimize-command-blocks: false
+fast-biome-lookups: false
+cancel-duplicate-fluid-ticks: false

@@ -15,7 +15,8 @@ services:
       MAX_PLAYERS: "5"
       RCON_PASSWORD: "${RCON_PASSWORD}"
       TZ: "Europe/Berlin"
-      DIFFICULTY: "2"
+      DIFFICULTY: "hard"
+      SIMULATION_DISTANCE: "10"
       LEVEL: "${WORLD}"
       OPS: |-
         timkley
@@ -37,6 +38,7 @@ services:
         shulker-drops-two
         # waystones
         biomes-o-plenty
+        servercore
         xaeros-world-map
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
       MODRINTH_ALLOWED_VERSION_TYPE: "alpha"
@@ -45,6 +47,7 @@ services:
         https://modrinth.com/plugin/simple-voice-chat
     volumes:
       - "./data:/data"
+      - "./servercore:/data/config/servercore"
 
   backups:
     image: itzg/mc-backup
