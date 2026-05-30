@@ -6,7 +6,7 @@
 name: immich
 
 services:
-  immich-server:
+  app:
     container_name: immich_server
     image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION}
     volumes:
@@ -15,8 +15,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - redis
-      - database
+      - broker
+      - db
     restart: always
     healthcheck:
       disable: false
@@ -31,7 +31,7 @@ services:
       - default
       - web
 
-  immich-machine-learning:
+  machine-learning:
     container_name: immich_machine_learning
     image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION}
     volumes:
@@ -41,15 +41,23 @@ services:
     restart: always
     healthcheck:
       disable: false
+    networks:
+      default:
+        aliases:
+          - immich-machine-learning
 
-  redis:
+  broker:
     container_name: immich_redis
     image: docker.io/valkey/valkey:9@sha256:3b55fbaa0cd93cf0d9d961f405e4dfcc70efe325e2d84da207a0a8e6d8fde4f9
     healthcheck:
       test: redis-cli ping || exit 1
     restart: always
+    networks:
+      default:
+        aliases:
+          - redis
 
-  database:
+  db:
     container_name: immich_postgres
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
     environment:
@@ -63,6 +71,10 @@ services:
     restart: always
     healthcheck:
       disable: false
+    networks:
+      default:
+        aliases:
+          - database
 
 volumes:
   model-cache:

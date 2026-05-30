@@ -159,13 +159,13 @@ backup_immich() {
         return
     fi
 
-    if ! container_running "$dir" database; then
+    if ! container_running "$dir" db; then
         log_error "immich: database container is not running; refusing incomplete backup"
         return
     fi
 
     log "immich: dumping PostgreSQL"
-    if ! compose "$dir" exec -T database \
+    if ! compose "$dir" exec -T db \
         sh -c 'pg_dump --clean --if-exists --dbname="${POSTGRES_DB:-immich}" --username="${POSTGRES_USER:-postgres}"' \
         | gzip > "$dump_file"; then
         rm -f "$dump_file"
