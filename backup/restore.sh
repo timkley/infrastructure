@@ -118,12 +118,12 @@ EOF
        set +a
   5. Create containers and start only Postgres:
        docker compose --project-directory $INFRA_DIR/immich create
-       docker start immich_postgres
+       docker start immich-db
        sleep 10
   6. Restore database dump:
        gunzip --stdout $RESTORE_DIR/$INFRA_DIR/immich/backup_immich.sql.gz \
        | sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \
-       | docker exec -i immich_postgres psql --dbname="${DB_DATABASE_NAME:-immich}" --username="${DB_USERNAME:-postgres}" --single-transaction --set ON_ERROR_STOP=on
+       | docker exec -i immich-db psql --dbname="${DB_DATABASE_NAME:-immich}" --username="${DB_USERNAME:-postgres}" --single-transaction --set ON_ERROR_STOP=on
   7. docker compose --project-directory $INFRA_DIR/immich up -d
   8. Verify, then: rm -rf $INFRA_DIR/immich/library.old $INFRA_DIR/immich/postgres.old
 EOF
