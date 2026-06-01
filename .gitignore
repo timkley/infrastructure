@@ -5,3 +5,5 @@ backup/backup.env
 immich/library
 immich/postgres
 .agents/
+__pycache__/
+*.py[cod]

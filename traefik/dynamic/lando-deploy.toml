@@ -1,0 +1,10 @@
+[http.routers.lando-deploy]
+  rule = "Host(`deploy.timkley.dev`) && (Path(`/deploy`) || Path(`/health`))"
+  entrypoints = ["websecure"]
+  service = "lando-deploy"
+  [http.routers.lando-deploy.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.lando-deploy.loadBalancer]
+  [[http.services.lando-deploy.loadBalancer.servers]]
+    url = "http://host.docker.internal:8010"

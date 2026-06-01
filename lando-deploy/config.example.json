@@ -1,0 +1,12 @@
+{
+  "audience": "lando-deploy",
+  "host": "0.0.0.0",
+  "port": 8010,
+  "apps": {
+    "timkley/bruderwo": {
+      "app": "bruderwo",
+      "refs": ["refs/heads/main"],
+      "events": ["workflow_run", "workflow_dispatch"]
+    }
+  }
+}
