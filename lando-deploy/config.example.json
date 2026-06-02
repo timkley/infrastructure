@@ -5,8 +5,53 @@
   "apps": {
     "timkley/bruderwo": {
       "app": "bruderwo",
-      "refs": ["refs/heads/main"],
-      "events": ["workflow_run", "workflow_dispatch"]
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
+    },
+    "timkley/guess-the-year": {
+      "app": "guess-the-year",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
+    },
+    "timkley/deine-mutter": {
+      "app": "deine-mutter",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
+    },
+    "timkley/blockgradient": {
+      "app": "blockgradient",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
+    },
+    "timkley/warentarifnummern.de": {
+      "app": "warentarifnummern",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
     }
   }
 }
