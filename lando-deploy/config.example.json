@@ -52,6 +52,16 @@
         "workflow_run",
         "workflow_dispatch"
       ]
+    },
+    "timkley/tim-und-paula.love": {
+      "app": "tim-und-paula",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
     }
   }
 }
