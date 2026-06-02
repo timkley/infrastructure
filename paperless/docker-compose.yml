@@ -23,6 +23,8 @@ services:
     env_file: .env
     environment:
       PAPERLESS_REDIS: redis://broker:6379
+      PAPERLESS_TASK_WORKERS: "1"
+      PAPERLESS_THREADS_PER_WORKER: "1"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"

@@ -12,8 +12,11 @@ services:
     volumes:
       - ${UPLOAD_LOCATION}:/data
       - /etc/localtime:/etc/localtime:ro
+      - ./config.json:/config/immich.json:ro
     env_file:
       - .env
+    environment:
+      IMMICH_CONFIG_FILE: /config/immich.json
     depends_on:
       - broker
       - db

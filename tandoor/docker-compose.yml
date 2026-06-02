@@ -4,6 +4,8 @@ services:
     image: vabene1111/recipes
     env_file:
       - ./.env
+    environment:
+      GUNICORN_WORKERS: "1"
     volumes:
       - staticfiles:/opt/recipes/staticfiles
       - ./mediafiles:/opt/recipes/mediafiles
