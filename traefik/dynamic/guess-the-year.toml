@@ -1,0 +1,22 @@
+[http.routers.guess-the-year-reverb]
+  rule = "Host(`gty.timkley.dev`) && (PathPrefix(`/app`) || PathPrefix(`/apps`))"
+  entrypoints = ["websecure"]
+  service = "guess-the-year-reverb"
+  priority = 100
+  [http.routers.guess-the-year-reverb.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.guess-the-year-reverb.loadBalancer]
+  [[http.services.guess-the-year-reverb.loadBalancer.servers]]
+    url = "http://host.docker.internal:8082"
+
+[http.routers.guess-the-year]
+  rule = "Host(`gty.timkley.dev`)"
+  entrypoints = ["websecure"]
+  service = "guess-the-year"
+  [http.routers.guess-the-year.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.guess-the-year.loadBalancer]
+  [[http.services.guess-the-year.loadBalancer.servers]]
+    url = "http://host.docker.internal:8003"

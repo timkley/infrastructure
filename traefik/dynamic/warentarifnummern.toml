@@ -1,0 +1,10 @@
+[http.routers.warentarifnummern]
+  rule = "Host(`www.warentarifnummern.de`) || Host(`warentarifnummern.de`)"
+  entrypoints = ["websecure"]
+  service = "warentarifnummern"
+  [http.routers.warentarifnummern.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.warentarifnummern.loadBalancer]
+  [[http.services.warentarifnummern.loadBalancer.servers]]
+    url = "http://host.docker.internal:8005"
