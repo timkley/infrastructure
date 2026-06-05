@@ -8,7 +8,7 @@ services:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      VERSION: "1.21.11"
+      VERSION: "26.1.2"
       ENABLE_STATUS: "true"
       TYPE: "FABRIC"
       INIT_MEMORY: "512M"
@@ -39,13 +39,14 @@ services:
         shulker-drops-two
         # waystones
         biomes-o-plenty
+        glitchcore
+        terrablender
         servercore
+        simple-voice-chat
         xaeros-world-map
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
       MODRINTH_ALLOWED_VERSION_TYPE: "alpha"
       SPAWN_PROTECTION: "0"
-      PLUGINS: |-
-        https://modrinth.com/plugin/simple-voice-chat
     volumes:
       - "./data:/data"
       - "./servercore:/data/config/servercore"
