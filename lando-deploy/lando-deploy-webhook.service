@@ -12,6 +12,7 @@ Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
 Environment=LANDO_DEPLOY_CONFIG=/home/admin/lando-deploy-webhook/config.json
+EnvironmentFile=-/home/admin/lando-deploy-webhook/secrets.env
 
 [Install]
 WantedBy=multi-user.target

@@ -33,6 +33,16 @@
         "workflow_dispatch"
       ]
     },
+    "timkley/deponi.app": {
+      "app": "deponi",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
+    },
     "timkley/blockgradient": {
       "app": "blockgradient",
       "refs": [
@@ -45,6 +55,16 @@
     },
     "timkley/warentarifnummern.de": {
       "app": "warentarifnummern",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "workflow_run",
+        "workflow_dispatch"
+      ]
+    },
+    "timkley/tim-kleyersburg.de": {
+      "app": "tim-kleyersburg",
       "refs": [
         "refs/heads/main"
       ],

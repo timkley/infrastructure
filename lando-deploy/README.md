@@ -16,6 +16,7 @@ Der Ansatz ist bewusst kein SSH aus GitHub Actions und kein self-hosted Runner. 
    - Repository ist in `/home/admin/lando-deploy-webhook/config.json` erlaubt
    - Ref ist erlaubt, normalerweise `refs/heads/main`
 6. Der Dienst führt `/var/www/<app>/deploy.sh` aus.
+7. Bei erfolgreichem Deploy sendet der Dienst optional eine Discord-Benachrichtigung, wenn `LANDO_DEPLOY_DISCORD_WEBHOOK_URL` gesetzt ist.
 
 ## Server-Dateien
 
@@ -24,6 +25,7 @@ Auf `lando`:
 ```text
 /home/admin/lando-deploy-webhook/server.py
 /home/admin/lando-deploy-webhook/config.json
+/home/admin/lando-deploy-webhook/secrets.env
 /etc/systemd/system/lando-deploy-webhook.service
 /home/admin/docker/traefik/dynamic/lando-deploy.toml
 ```
@@ -56,15 +58,36 @@ Dienst nach Änderung neu laden:
 
 ```bash
 scp lando-deploy/server.py lando:/tmp/server.py
+scp lando-deploy/lando-deploy-webhook.service lando:/tmp/lando-deploy-webhook.service
 scp lando-deploy/config.example.json lando:/tmp/config.json
 ssh lando '
   set -euo pipefail
   mv -f /tmp/server.py /home/admin/lando-deploy-webhook/server.py
   mv -f /tmp/config.json /home/admin/lando-deploy-webhook/config.json
+  sudo mv -f /tmp/lando-deploy-webhook.service /etc/systemd/system/lando-deploy-webhook.service
   chmod 700 /home/admin/lando-deploy-webhook/server.py
   chmod 600 /home/admin/lando-deploy-webhook/config.json
+  sudo chown root:root /etc/systemd/system/lando-deploy-webhook.service
+  sudo systemctl daemon-reload
   sudo systemctl restart lando-deploy-webhook.service
 '
+```
+
+Discord-Deployment-Benachrichtigung konfigurieren:
+
+```bash
+ssh lando '
+  set -euo pipefail
+  install -m 600 -o admin -g admin /dev/null /home/admin/lando-deploy-webhook/secrets.env
+  editor /home/admin/lando-deploy-webhook/secrets.env
+  sudo systemctl restart lando-deploy-webhook.service
+'
+```
+
+`secrets.env` enthält nicht versionierte Werte:
+
+```dotenv
+LANDO_DEPLOY_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
 
 Traefik-Route deployen:
@@ -154,6 +177,7 @@ jobs:
 - Keine GitHub-Secrets pro Repo.
 - Keine GitHub-hosted Runner im Tailscale-Netz.
 - Kein öffentlicher SSH-Zugang für Deploys.
+- Discord-Webhook-URLs liegen in `/home/admin/lando-deploy-webhook/secrets.env`, nicht im Git-Repo.
 - Der interne Dienst-Port `8010` ist per UFW nur aus dem Docker-Netz erreichbar.
 - Traefik routet nur exakt `/deploy` und `/health` an den Dienst.
 - Ein GitHub-OIDC-Token ist kurzlebig und an Repository, Ref, Event und Audience gebunden.

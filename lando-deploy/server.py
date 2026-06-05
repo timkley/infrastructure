@@ -9,12 +9,14 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import jwt
 from jwt import PyJWKClient
 
 
 CONFIG_PATH = Path(os.environ.get("LANDO_DEPLOY_CONFIG", "/home/admin/lando-deploy-webhook/config.json"))
+DISCORD_WEBHOOK_ENV = "LANDO_DEPLOY_DISCORD_WEBHOOK_URL"
 ISSUER = "https://token.actions.githubusercontent.com"
 JWKS_URL = f"{ISSUER}/.well-known/jwks"
 APP_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -124,6 +126,42 @@ def run_deploy(app_name):
     return completed.returncode, duration, output
 
 
+def notify_deploy_success(config, repository, app_name, claims, duration):
+    webhook_url = os.environ.get(DISCORD_WEBHOOK_ENV, "").strip() or str(config.get("discord_webhook_url") or "").strip()
+    if not webhook_url:
+        return
+
+    sha = str(claims.get("sha") or "")
+    short_sha = sha[:7] if sha else "unknown"
+    run_id = str(claims.get("run_id") or "")
+    run_url = f"https://github.com/{repository}/actions/runs/{run_id}" if run_id else None
+
+    payload = {
+        "content": (
+            f":white_check_mark: Deployment erfolgreich: `{app_name}`\n"
+            f"Repo: `{repository}`\n"
+            f"Commit: `{short_sha}`\n"
+            f"Dauer: `{duration:.1f}s`"
+        )
+    }
+
+    if run_url:
+        payload["content"] += f"\nRun: {run_url}"
+
+    request = Request(
+        webhook_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "lando-deploy-webhook/1.0",
+        },
+        method="POST",
+    )
+
+    with urlopen(request, timeout=10) as response:
+        response.read()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "LandoDeployWebhook/1.0"
 
@@ -168,6 +206,12 @@ class Handler(BaseHTTPRequestHandler):
             claims = verify_token(authorization.removeprefix("Bearer ").strip(), config)
             repository, app_name = resolve_app(claims, request_body, config)
             return_code, duration, output = run_deploy(app_name)
+
+            if return_code == 0:
+                try:
+                    notify_deploy_success(config, repository, app_name, claims, duration)
+                except Exception as error:
+                    self.log_message("discord deploy notification failed: %s", repr(error))
 
             response = (
                 f"repository={repository}\n"
