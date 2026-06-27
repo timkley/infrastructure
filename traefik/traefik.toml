@@ -10,6 +10,10 @@
 
   [entryPoints.websecure]
     address = ":443"
+    [entryPoints.websecure.transport]
+      [entryPoints.websecure.transport.respondingTimeouts]
+        readTimeout = "600s"
+        idleTimeout = "600s"
     [entryPoints.websecure.http.tls]
       certResolver = "lets-encrypt"
 
@@ -34,4 +38,3 @@
 [experimental.plugins.headerauthentication]
   moduleName = "github.com/omar-shrbajy-arive/headerauthentication"
   version = "v1.0.3"
-

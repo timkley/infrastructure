@@ -1,0 +1,30 @@
+services:
+  app:
+    image: ghcr.io/orangecoding/fredy:master
+    restart: unless-stopped
+    mem_limit: 1g
+    environment:
+      NODE_ENV: production
+      TZ: Europe/Berlin
+    volumes:
+      - ./conf:/conf
+      - ./db:/db
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "5", "http://127.0.0.1:9998/"]
+      interval: 120s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=9998"
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
