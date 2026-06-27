@@ -2,7 +2,7 @@
 #
 # backup.sh — Back up Docker service data to Hetzner Storage Box via restic
 #
-# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich
+# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao
 # Run manually:  ./backup.sh
 # Run one service: ./backup.sh paperless
 #
@@ -183,6 +183,70 @@ backup_immich() {
     log "immich: done"
 }
 
+backup_openbao() {
+    local dir="$INFRA_DIR/openbao"
+    local env_file="$dir/backup.env"
+    local backup_dir="$dir/backup"
+    local snapshot_file="$backup_dir/openbao-raft.snap"
+    local audit_file="$backup_dir/openbao-audit.log"
+    log "openbao: starting backup"
+
+    if [[ ! -f "$env_file" ]]; then
+        log_error "openbao: backup.env missing; refusing to create an inconsistent raw Raft backup"
+        return
+    fi
+
+    # shellcheck source=/dev/null
+    source "$env_file"
+
+    if [[ -z "${OPENBAO_TOKEN:-}" ]]; then
+        log_error "openbao: OPENBAO_TOKEN missing in backup.env"
+        return
+    fi
+
+    if ! container_running "$dir" app; then
+        log_error "openbao: app container is not running"
+        return
+    fi
+
+    log "openbao: renewing backup token"
+    if ! compose "$dir" exec -T -e BAO_TOKEN="$OPENBAO_TOKEN" app \
+        bao token renew >/dev/null; then
+        log_error "openbao: backup token renewal failed"
+        return
+    fi
+
+    log "openbao: creating Raft snapshot"
+    rm -rf "$backup_dir"
+    install -d -m 700 "$backup_dir"
+
+    if ! compose "$dir" exec -T -e BAO_TOKEN="$OPENBAO_TOKEN" app \
+        bao operator raft snapshot save /tmp/openbao-raft.snap >/dev/null; then
+        rm -rf "$backup_dir"
+        log_error "openbao: Raft snapshot failed"
+        return
+    fi
+
+    compose "$dir" cp app:/tmp/openbao-raft.snap "$snapshot_file" >/dev/null
+    compose "$dir" exec -T app rm -f /tmp/openbao-raft.snap
+
+    if ! compose "$dir" exec -T app sh -c 'test -f /openbao/audit/openbao-audit.log && cat /openbao/audit/openbao-audit.log' > "$audit_file"; then
+        rm -rf "$backup_dir"
+        log_error "openbao: audit log copy failed"
+        return
+    fi
+
+    chmod 600 "$snapshot_file" "$audit_file"
+
+    restic backup --tag openbao \
+        "$snapshot_file" \
+        "$audit_file"
+
+    rm -rf "$backup_dir"
+
+    log "openbao: done"
+}
+
 # ---------------------------------------------------------------------------
 # Retention policy: daily 7, weekly 4, monthly 6
 # ---------------------------------------------------------------------------
@@ -200,7 +264,7 @@ apply_retention() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich)
+ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich openbao)
 
 main() {
     acquire_lock
@@ -219,6 +283,7 @@ main() {
             traefik)   backup_traefik   ;;
             couchdb)   backup_couchdb   ;;
             immich)    backup_immich    ;;
+            openbao)   backup_openbao   ;;
             *) log_error "Unknown service: $svc" ;;
         esac
     done

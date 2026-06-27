@@ -22,7 +22,7 @@ usage() {
     echo "  $0 snapshots [service]           List available snapshots"
     echo "  $0 restore <service> [snapshot]  Restore to temp directory"
     echo ""
-    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich"
+    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao"
     exit 1
 }
 
@@ -126,6 +126,26 @@ EOF
        | docker exec -i immich-db psql --dbname="${DB_DATABASE_NAME:-immich}" --username="${DB_USERNAME:-postgres}" --single-transaction --set ON_ERROR_STOP=on
   7. docker compose --project-directory $INFRA_DIR/immich up -d
   8. Verify, then: rm -rf $INFRA_DIR/immich/library.old $INFRA_DIR/immich/postgres.old
+EOF
+            ;;
+        openbao)
+            cat <<'EOF'
+  1. Find the restored snapshot file:
+       ls $RESTORE_DIR/$INFRA_DIR/openbao/backup/openbao-raft.snap
+  2. Start OpenBao with an empty or disposable data directory.
+  3. Initialize and unseal that temporary OpenBao instance.
+  4. Copy the snapshot into the container-mounted data directory:
+       cp $RESTORE_DIR/$INFRA_DIR/openbao/backup/openbao-raft.snap \
+         $INFRA_DIR/openbao/data/openbao-raft.snap
+  5. Restore the Raft snapshot with an authorized token:
+       docker compose --project-directory $INFRA_DIR/openbao exec -T app \
+         bao operator raft snapshot restore -force /openbao/data/openbao-raft.snap
+  6. Remove the temporary snapshot copy from the live data directory.
+  7. Restart OpenBao, unseal with the restored unseal keys, and run:
+       $INFRA_DIR/openbao/smoke-test.sh
+
+  Keep Root-Token and Unseal-Keys out of shells with history where possible.
+  Restore should be rehearsed before relying on OpenBao for production MCP access.
 EOF
             ;;
         *)

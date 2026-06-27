@@ -1,0 +1,6 @@
+.env
+backup.env
+backup/
+data/
+audit/
+*.snap

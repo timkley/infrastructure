@@ -1,0 +1,23 @@
+services:
+  app:
+    container_name: openbao-app
+    image: openbao/openbao:${OPENBAO_VERSION:-2.5.5}
+    restart: unless-stopped
+    command: server
+    environment:
+      BAO_ADDR: http://127.0.0.1:8200
+      SKIP_CHOWN: "true"
+    ports:
+      - "${OPENBAO_BIND_ADDR:-127.0.0.1}:8200:8200"
+    volumes:
+      - ./config:/openbao/config:ro
+      - ./data:/openbao/data
+      - ./audit:/openbao/audit
+    healthcheck:
+      test: ["CMD-SHELL", "bao status -address=http://127.0.0.1:8200 >/dev/null || test $$? -eq 2"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=false"
