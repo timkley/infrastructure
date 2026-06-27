@@ -1121,14 +1121,14 @@ async def refresh_google_access_token(openbao: OpenBaoKV2) -> tuple[str, bool]:
 async def fetch_google_health_access_status(access_token: str) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.get(
-            "https://www.googleapis.com/fitness/v1/users/me/dataSources",
+            "https://health.googleapis.com/v4/users/me/identity",
             headers={"Authorization": f"Bearer {access_token}"},
         )
 
     if response.status_code != 200:
         return {
             "ok": False,
-            "endpoint": "google_fit.dataSources.list",
+            "endpoint": "google_health.identity",
             "status": "health_api_endpoint_unavailable",
             "error": sanitized_api_error(response),
         }
@@ -1138,27 +1138,20 @@ async def fetch_google_health_access_status(access_token: str) -> dict[str, Any]
     except json.JSONDecodeError:
         return {
             "ok": False,
-            "endpoint": "google_fit.dataSources.list",
+            "endpoint": "google_health.identity",
             "status": "health_api_invalid_json",
         }
 
-    data_sources = payload.get("dataSource", [])
-    if not isinstance(data_sources, list):
-        data_sources = []
-
-    data_types = sorted(
-        {
-            item.get("dataType", {}).get("name")
-            for item in data_sources
-            if isinstance(item, dict) and isinstance(item.get("dataType"), dict) and item["dataType"].get("name")
-        }
-    )
+    health_user_id = payload.get("healthUserId")
+    legacy_user_id = payload.get("legacyUserId")
 
     return {
         "ok": True,
-        "endpoint": "google_fit.dataSources.list",
-        "data_source_count": len(data_sources),
-        "data_types_sample": data_types[:10],
+        "endpoint": "google_health.identity",
+        "identity": {
+            "healthUserId": health_user_id if isinstance(health_user_id, str) else None,
+            "legacyUserId": legacy_user_id if isinstance(legacy_user_id, str) else None,
+        },
     }
 
 

@@ -7,7 +7,7 @@ The MCP exposes status tools plus narrow service capabilities:
 - `access_status` reports MCP readiness and the declared capability registry.
 - `openbao_status` reports whether OpenBao is reachable and ready, using only safe status fields.
 - `x.get_tweet(tweet_id_or_url)` reads one public tweet through server-side X OAuth, refreshes the stored OAuth token when needed, verifies that the author is not protected, and returns tweet text, author metadata, URL, created time, public metrics, and media URLs.
-- `google_health.access_status` refreshes a Google access token server-side and calls the harmless Google Fit `users/me/dataSources` endpoint to report access/scope status without returning health datapoints.
+- `google_health.access_status` refreshes a Google access token server-side and calls the harmless Google Health API v4 `users/me/identity` endpoint to report access/scope status without returning health datapoints.
 - `elevenlabs.text_to_speech(...)` creates speech through server-side ElevenLabs credentials after explicit `confirm=true` and stores the audio as a private runtime artifact. The MCP response returns metadata only: `artifact_id`, `mime_type`, `byte_size`, `sha256`, `created_at`, `voice_id`, `model_id`, `output_format`, and private download instructions.
 - `elevenlabs.request(...)` is a service-scoped ElevenLabs request tool for `https://api.elevenlabs.io`. The API key is never returned. Known binary responses are stored as private artifacts, large JSON is redacted before artifact storage, and large text-like responses are refused.
 - `homeassistant.request(...)` is a service-scoped Home Assistant request tool for the `url` configured in OpenBao.
