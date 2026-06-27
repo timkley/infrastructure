@@ -1708,6 +1708,7 @@ def build_mcp() -> FastMCP:
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Accept": "application/json, text/*;q=0.9, */*;q=0.1",
+                    "Accept-Encoding": "identity",
                 },
                 resource_url=resource_url,
                 service_name="tandoor",
