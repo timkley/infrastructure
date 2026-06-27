@@ -1,0 +1,39 @@
+services:
+  app:
+    container_name: heisenberg-access-mcp-app
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HEISENBERG_ACCESS_MCP_HOST: 0.0.0.0
+      HEISENBERG_ACCESS_MCP_PORT: 8000
+      OPENBAO_ADDR: ${OPENBAO_ADDR:-http://openbao-app:8200}
+      HEISENBERG_ACCESS_MCP_ARTIFACT_DIR: /var/lib/heisenberg-access-mcp/artifacts
+    ports:
+      - "${HEISENBERG_ACCESS_MCP_BIND_ADDR:-127.0.0.1}:${HEISENBERG_ACCESS_MCP_BIND_PORT:-8020}:8000"
+    volumes:
+      - artifacts:/var/lib/heisenberg-access-mcp/artifacts
+    networks:
+      - default
+      - openbao
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import http.client; c=http.client.HTTPConnection('127.0.0.1', 8000, timeout=5); c.request('GET', '/health'); r=c.getresponse(); raise SystemExit(0 if r.status == 200 else 1)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "traefik.enable=false"
+
+networks:
+  openbao:
+    external: true
+    name: ${OPENBAO_NETWORK:-openbao_default}
+
+volumes:
+  artifacts:

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "heisenberg-access-mcp"
+version = "0.1.0"
+description = "Private MCP capability gate in front of OpenBao."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "httpx>=0.28,<1",
+  "mcp[cli]>=1.27,<2",
+  "uvicorn[standard]>=0.38,<1",
+]
+
+[project.scripts]
+heisenberg-access-mcp = "heisenberg_access_mcp.server:main"
