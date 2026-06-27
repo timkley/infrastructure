@@ -532,7 +532,10 @@ def validate_service_path(path: str) -> str:
         if decoded_segment in {".", ".."} or "/" in decoded_segment or "\\" in decoded_segment:
             raise CapabilityError("path_traversal_not_allowed")
 
-    return "/" + "/".join(segments)
+    normalized_path = "/" + "/".join(segments)
+    if segments and path.endswith("/"):
+        return f"{normalized_path}/"
+    return normalized_path
 
 
 def join_service_url(base_url: str, path: str) -> str:
