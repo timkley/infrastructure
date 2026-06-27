@@ -8,9 +8,13 @@ The MCP exposes status tools plus narrow service capabilities:
 - `openbao_status` reports whether OpenBao is reachable and ready, using only safe status fields.
 - `x.get_tweet(tweet_id_or_url)` reads one public tweet through server-side X OAuth, refreshes the stored OAuth token when needed, verifies that the author is not protected, and returns tweet text, author metadata, URL, created time, public metrics, and media URLs.
 - `google_health.access_status` refreshes a Google access token server-side and calls the harmless Google Health API v4 `users/me/identity` endpoint to report access/scope status without returning health datapoints.
-- `google_health.list_data_types` documents the Google Health fitness data types available through the current readonly activity scope, including exercise/workout, steps, distance, calories, active minutes, and heart rate daily rollups.
+- `google_health.list_data_types` documents the Google Health API v4 fitness, activity, workout, sleep, health metrics, route/location, TCX, and required readonly OAuth scopes exposed by the explicit tool allowlists.
+- `google_health.get_activity_data_points(...)` reads paginated allowlisted activity datapoints such as steps, distance, calories, active minutes, heart-rate zones, heart rate, altitude, VO2, and exercise/workout sessions.
 - `google_health.get_exercise_data_points(...)` reads paginated Google Health exercise/workout datapoints for a civil date range, with `page_size` capped at 25.
-- `google_health.summarize_activity_day(date)` returns a compact daily log summary for steps, calories, distance, active minutes, heart rate, and workouts without dumping large raw health responses.
+- `google_health.export_exercise_tcx(...)` exports a single workout route/location TCX file as a private runtime artifact; it returns artifact metadata only.
+- `google_health.get_sleep_data_points(...)` and `google_health.summarize_sleep_day(date)` read sleep sessions, sleep summaries, and sleep-stage context through the readonly sleep scope.
+- `google_health.get_health_metric_data_points(...)` and `google_health.summarize_health_day(date)` read allowlisted health metrics such as heart rate, resting HR, HRV, oxygen saturation / SpO2, respiratory rate, weight, body fat, temperature, and blood glucose.
+- `google_health.summarize_activity_day(date)` returns a compact daily log summary for steps, calories, distance, active minutes, heart-rate zones, altitude, floors, VO2, heart rate, and workouts without dumping large raw health responses.
 - `elevenlabs.text_to_speech(...)` creates speech through server-side ElevenLabs credentials after explicit `confirm=true` and stores the audio as a private runtime artifact. The MCP response returns metadata only: `artifact_id`, `mime_type`, `byte_size`, `sha256`, `created_at`, `voice_id`, `model_id`, `output_format`, and private download instructions.
 - `elevenlabs.request(...)` is a service-scoped ElevenLabs request tool for `https://api.elevenlabs.io`. The API key is never returned. Known binary responses are stored as private artifacts, large JSON is redacted before artifact storage, and large text-like responses are refused.
 - `homeassistant.request(...)` is a service-scoped Home Assistant request tool for the `url` configured in OpenBao.
@@ -45,17 +49,32 @@ Large artifacts above the server download limit are refused before storage inste
 
 Use dedicated tools, such as `elevenlabs.text_to_speech`, for binary or high-level workflows where the server should manage artifacts and metadata deliberately.
 
-## Google Health Fitness Data
+## Google Health Fitness, Sleep, and Metrics
 
-Google Health tools use the server-side OAuth client and refresh token from OpenBao. The current scope is `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`, so the MCP exposes only read-only fitness data tools. There are no health data write tools.
+Google Health tools use the server-side OAuth client and refresh token from OpenBao. The intended read-only scope set is:
+
+- `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
+- `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
+- `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
+- `https://www.googleapis.com/auth/googlehealth.location.readonly`
+
+Optional read-only scopes can be added to the same consent flow when needed: nutrition, ECG, irregular rhythm notification, profile, and settings. The MCP does not expose Google Health write tools.
+
+When changing Google Health scopes, Tim must perform a new OAuth consent and replace `secret/data/heisenberg/google-health/oauth-token` in OpenBao with the new refresh token plus metadata such as `scope_set`, `source`, and `stored_at`. Existing refresh tokens do not gain newly requested scopes automatically. If a tool returns a sanitized Google `PERMISSION_DENIED` or unsupported-data-type error, check the OpenBao `scope_set` and Google API support for that data type before changing code.
 
 Useful tools:
 
-- `google_health.list_data_types` explains which Google Health API v4 data types are useful for fitness data, exercise, workout, activity, daily log, steps, calories, distance, active minutes, heart rate, health datapoints, and date range queries. Google Health v4 does not expose a generic `users.dataTypes.list` REST endpoint, so this tool returns the documented and live-probed supported set.
-- `google_health.get_exercise_data_points(start_time?, end_time?, page_size?, page_token?)` reads raw exercise/workout session datapoints from `/v4/users/me/dataTypes/exercise/dataPoints`. `start_time` and `end_time` are civil bounds in `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS` format. The response removes data point resource names and caps `page_size` at 25.
-- `google_health.summarize_activity_day(date)` calls Google Health daily rollups for `steps`, `distance`, `active-energy-burned`, `active-minutes`, `active-zone-minutes`, `heart-rate`, and `total-calories`, then adds compact exercise/workout summaries for the same date. Use this for Daily Log, Brain, and Fitnessdaten-Sync workflows where a concise one-day summary is better than raw datapoint dumps.
+- `google_health.list_data_types` explains the explicit allowlisted Google Health API v4 data types and required scopes for fitness data, exercise, workout, activity, daily log, sleep, sleep stages, health metrics, heart rate, HRV, recovery, weight, body fat, oxygen saturation / SpO2, respiratory rate, route, location, TCX, health datapoints, and date range queries. Google Health v4 does not expose a generic `users.dataTypes.list` REST endpoint, so this tool returns the documented allowlist.
+- `google_health.get_activity_data_points(data_type, start_time?, end_time?, page_size?, page_token?)` reads allowlisted activity datapoints from `/v4/users/me/dataTypes/{data_type}/dataPoints`. Supported examples include `steps`, `distance`, `active-energy-burned`, `active-minutes`, `active-zone-minutes`, `heart-rate`, `time-in-heart-rate-zone`, `altitude`, `vo2-max`, `run-vo2-max`, and `exercise`.
+- `google_health.get_exercise_data_points(start_time?, end_time?, page_size?, page_token?)` is a focused workout/session reader for `/v4/users/me/dataTypes/exercise/dataPoints`. It returns a sanitized `data_point_id` for optional TCX export and caps `page_size` at 25.
+- `google_health.export_exercise_tcx(exercise_data_point_id, partial_data?)` calls `exportExerciseTcx?alt=media` for one exercise data point. It requires activity plus location readonly scopes, stores the TCX XML as a private artifact, and returns only artifact metadata.
+- `google_health.get_sleep_data_points(start_time?, end_time?, page_size?, page_token?)` reads sleep sessions using the Google Health sleep-specific civil end time filter and caps `page_size` at 25.
+- `google_health.summarize_sleep_day(date)` returns compact sleep-session summaries, sleep-stage counts, summary fields, and out-of-bed counts for one day.
+- `google_health.get_health_metric_data_points(data_type, start_time?, end_time?, page_size?, page_token?)` reads allowlisted health metrics such as `heart-rate`, `daily-resting-heart-rate`, `daily-heart-rate-variability`, `heart-rate-variability`, `daily-oxygen-saturation`, `oxygen-saturation`, `daily-respiratory-rate`, `respiratory-rate-sleep-summary`, `weight`, `body-fat`, `core-body-temperature`, and `blood-glucose`.
+- `google_health.summarize_health_day(date)` combines daily rollups and compact daily records for recovery and body metrics.
+- `google_health.summarize_activity_day(date)` calls Google Health daily rollups for activity metrics such as `steps`, `distance`, `active-energy-burned`, `active-minutes`, `active-zone-minutes`, `time-in-heart-rate-zone`, `altitude`, `floors`, `run-vo2-max`, `heart-rate`, and `total-calories`, then adds compact exercise/workout summaries for the same date. Use this for Daily Log, Brain, and fitness data sync workflows where a concise one-day summary is better than raw datapoint dumps.
 
-Large raw health responses are intentionally avoided. Exercise reads are paginated, daily summaries query one day at a time, and tool verification should report only status, counts, keys, and time windows rather than full health datapoints.
+Large raw health responses are intentionally avoided. Raw reads are paginated, session reads cap `page_size` at 25, broader sample reads cap `page_size` at 100, daily summaries query one day at a time, and TCX exports become private artifacts. Verification reports should include only status, counts, keys, endpoints, and time windows rather than full health datapoints, tokens, identities, or health values.
 
 ## Service-Scoped Requests
 
@@ -153,8 +172,14 @@ Tools should stay explicit capabilities such as:
 - `x.get_tweet`
 - `google_health.access_status`
 - `google_health.list_data_types`
+- `google_health.get_activity_data_points`
 - `google_health.get_exercise_data_points`
+- `google_health.export_exercise_tcx`
+- `google_health.get_sleep_data_points`
 - `google_health.summarize_activity_day`
+- `google_health.summarize_sleep_day`
+- `google_health.get_health_metric_data_points`
+- `google_health.summarize_health_day`
 - `elevenlabs.text_to_speech`
 - `elevenlabs.request`, `homeassistant.request`, `freshrss.request`, and `tandoor.request` scoped to fixed service base URLs
 

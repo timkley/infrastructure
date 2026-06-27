@@ -83,58 +83,368 @@ ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 ELEVENLABS_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 GOOGLE_HEALTH_CIVIL_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?$")
+GOOGLE_HEALTH_EXERCISE_DATA_POINT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 TOKEN_REFRESH_SKEW = timedelta(minutes=5)
 GOOGLE_HEALTH_ACTIVITY_SCOPE = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
-GOOGLE_HEALTH_LISTABLE_ACTIVITY_DATA_TYPES = {
+GOOGLE_HEALTH_SLEEP_SCOPE = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
+GOOGLE_HEALTH_HEALTH_METRICS_SCOPE = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
+GOOGLE_HEALTH_LOCATION_SCOPE = "https://www.googleapis.com/auth/googlehealth.location.readonly"
+GOOGLE_HEALTH_REQUIRED_READONLY_SCOPES = (
+    GOOGLE_HEALTH_ACTIVITY_SCOPE,
+    GOOGLE_HEALTH_SLEEP_SCOPE,
+    GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+    GOOGLE_HEALTH_LOCATION_SCOPE,
+)
+GOOGLE_HEALTH_OPTIONAL_READONLY_SCOPES = (
+    "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
+    "https://www.googleapis.com/auth/googlehealth.ecg.readonly",
+    "https://www.googleapis.com/auth/googlehealth.irn.readonly",
+    "https://www.googleapis.com/auth/googlehealth.profile.readonly",
+    "https://www.googleapis.com/auth/googlehealth.settings.readonly",
+)
+# Google Health path names stay hyphenated, but list filters for hyphenated
+# data types are accepted with snake_case prefixes in live API probes.
+GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES = {
+    "active-energy-burned": {
+        "field": "activeEnergyBurned",
+        "filter_prefix": "active_energy_burned",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Active calories burned activity datapoints over an interval.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "active-minutes": {
+        "field": "activeMinutes",
+        "filter_prefix": "active_minutes",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Active minutes by activity level over an interval.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "active-zone-minutes": {
+        "field": "activeZoneMinutes",
+        "filter_prefix": "active_zone_minutes",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Active zone minutes in heart-rate zones over an interval.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "altitude": {
+        "field": "altitude",
+        "filter_prefix": "altitude",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Altitude gain activity datapoints over an interval.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
     "distance": {
         "field": "distance",
+        "filter_prefix": "distance",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Distance activity datapoints over an interval.",
         "supports_raw_points": True,
         "supports_daily_rollup": True,
     },
     "exercise": {
         "field": "exercise",
+        "filter_prefix": "exercise",
+        "filter_kind": "session_civil_start",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Exercise/workout sessions with activity type, duration, and metrics summary.",
         "supports_raw_points": True,
         "supports_daily_rollup": False,
         "max_page_size": 25,
     },
+    "heart-rate": {
+        "field": "heartRate",
+        "filter_prefix": "heart_rate",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Heart rate samples for activity, workout, and recovery context.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "run-vo2-max": {
+        "field": "runVo2Max",
+        "filter_prefix": "run_vo2_max",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Run VO2 max samples for fitness and workout performance context.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
     "steps": {
         "field": "steps",
+        "filter_prefix": "steps",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Step count activity datapoints over an interval.",
         "supports_raw_points": True,
         "supports_daily_rollup": True,
     },
+    "time-in-heart-rate-zone": {
+        "field": "timeInHeartRateZone",
+        "filter_prefix": "time_in_heart_rate_zone",
+        "filter_kind": "interval",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Time spent in heart-rate zones over an activity interval.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "vo2-max": {
+        "field": "vo2Max",
+        "filter_prefix": "vo2_max",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "VO2 max samples for cardio fitness and recovery context.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
 }
-GOOGLE_HEALTH_DAILY_ACTIVITY_DATA_TYPES = {
+GOOGLE_HEALTH_SLEEP_DATA_TYPES = {
+    "sleep": {
+        "field": "sleep",
+        "filter_prefix": "sleep",
+        "filter_kind": "sleep_session_civil_end",
+        "scope": GOOGLE_HEALTH_SLEEP_SCOPE,
+        "description": "Sleep sessions with interval, summary, sleep stages, and out-of-bed segments.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+        "max_page_size": 25,
+    },
+}
+GOOGLE_HEALTH_HEALTH_METRIC_DATA_TYPES = {
+    "blood-glucose": {
+        "field": "bloodGlucose",
+        "filter_prefix": "blood_glucose",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Blood glucose samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "body-fat": {
+        "field": "bodyFat",
+        "filter_prefix": "body_fat",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Body fat percentage samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "core-body-temperature": {
+        "field": "coreBodyTemperature",
+        "filter_prefix": "core_body_temperature",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Core body temperature samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "daily-heart-rate-variability": {
+        "field": "dailyHeartRateVariability",
+        "filter_prefix": "daily_heart_rate_variability",
+        "filter_kind": "daily",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily HRV and recovery metrics, including RMSSD when available.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "daily-heart-rate-zones": {
+        "field": "dailyHeartRateZones",
+        "filter_prefix": "daily_heart_rate_zones",
+        "filter_kind": "daily",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily heart-rate zone records.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "daily-oxygen-saturation": {
+        "field": "dailyOxygenSaturation",
+        "filter_prefix": "daily_oxygen_saturation",
+        "filter_kind": "daily",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily sleep oxygen saturation / SpO2 summary records.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "daily-respiratory-rate": {
+        "field": "dailyRespiratoryRate",
+        "filter_prefix": "daily_respiratory_rate",
+        "filter_kind": "daily",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily respiratory rate records.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "daily-resting-heart-rate": {
+        "field": "dailyRestingHeartRate",
+        "filter_prefix": "daily_resting_heart_rate",
+        "filter_kind": "daily",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily resting heart rate records for recovery context.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "daily-sleep-temperature-derivations": {
+        "field": "dailySleepTemperatureDerivations",
+        "filter_prefix": "daily_sleep_temperature_derivations",
+        "filter_kind": "daily",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily sleep temperature derivation records.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "heart-rate": {
+        "field": "heartRate",
+        "filter_prefix": "heart_rate",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Heart rate samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+    "heart-rate-variability": {
+        "field": "heartRateVariability",
+        "filter_prefix": "heart_rate_variability",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "HRV samples, including RMSSD and standard deviation when available.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "height": {
+        "field": "height",
+        "filter_prefix": "height",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Height samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "oxygen-saturation": {
+        "field": "oxygenSaturation",
+        "filter_prefix": "oxygen_saturation",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Oxygen saturation / SpO2 samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "respiratory-rate-sleep-summary": {
+        "field": "respiratoryRateSleepSummary",
+        "filter_prefix": "respiratory_rate_sleep_summary",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Respiratory rate sleep summary samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": False,
+    },
+    "weight": {
+        "field": "weight",
+        "filter_prefix": "weight",
+        "filter_kind": "sample",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Weight samples.",
+        "supports_raw_points": True,
+        "supports_daily_rollup": True,
+    },
+}
+GOOGLE_HEALTH_DAILY_ROLLUP_DATA_TYPES = {
     "active-energy-burned": {
         "field": "activeEnergyBurned",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Active calories burned, excluding basal calories.",
     },
     "active-minutes": {
         "field": "activeMinutes",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Active minutes by activity level.",
     },
     "active-zone-minutes": {
         "field": "activeZoneMinutes",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Active zone minutes in heart-rate zones.",
+    },
+    "altitude": {
+        "field": "altitude",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Daily altitude gain rollup.",
+    },
+    "blood-glucose": {
+        "field": "bloodGlucose",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily blood glucose average rollup.",
+    },
+    "body-fat": {
+        "field": "bodyFat",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily body fat average rollup.",
+    },
+    "core-body-temperature": {
+        "field": "coreBodyTemperature",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily core body temperature min/max/average rollup.",
     },
     "distance": {
         "field": "distance",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Daily distance rollup.",
+    },
+    "floors": {
+        "field": "floors",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Daily floors climbed rollup.",
     },
     "heart-rate": {
         "field": "heartRate",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Daily heart-rate min/max/average rollup.",
+    },
+    "run-vo2-max": {
+        "field": "runVo2Max",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Daily run VO2 max min/max/average rollup.",
+    },
+    "sedentary-period": {
+        "field": "sedentaryPeriod",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Daily sedentary-period rollup.",
     },
     "steps": {
         "field": "steps",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Daily step count rollup.",
+    },
+    "swim-lengths-data": {
+        "field": "swimLengthsData",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Daily swim lengths rollup.",
+    },
+    "time-in-heart-rate-zone": {
+        "field": "timeInHeartRateZone",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "description": "Daily time in heart-rate zones rollup.",
     },
     "total-calories": {
         "field": "totalCalories",
+        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
         "description": "Total calories burned, including basal calories.",
     },
+    "weight": {
+        "field": "weight",
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "description": "Daily weight average rollup.",
+    },
+}
+GOOGLE_HEALTH_DAILY_ACTIVITY_DATA_TYPES = {
+    name: spec for name, spec in GOOGLE_HEALTH_DAILY_ROLLUP_DATA_TYPES.items()
+    if spec["scope"] == GOOGLE_HEALTH_ACTIVITY_SCOPE
 }
 LEGACY_ELEVENLABS_OPERATIONS: dict[str, dict[str, Any]] = {
     "voices": {
@@ -208,7 +518,14 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "tool": "google_health.list_data_types",
         "enabled": True,
         "secret_access": False,
-        "scope": "documents Google Health fitness data, exercise, workout, activity, steps, calories, distance, active minutes, and health datapoints supported by the current readonly activity scope",
+        "scope": "documents Google Health fitness data, exercise, workout, activity, sleep, health metrics, heart rate, HRV, recovery, oxygen saturation, respiratory rate, weight, body fat, route, location, TCX, and required readonly OAuth scopes",
+    },
+    "google_health.get_activity_data_points": {
+        "tool": "google_health.get_activity_data_points",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read-only Google Health activity data points for allowlisted data types such as steps, distance, calories, active minutes, heart-rate zones, altitude, VO2 max, and workout-adjacent metrics; paginated",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
     },
     "google_health.get_exercise_data_points": {
         "tool": "google_health.get_exercise_data_points",
@@ -217,11 +534,46 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "scope": "read-only Google Health exercise/workout data points for a date range; paginated with page_size <= 25",
         "writes": "updates token metadata only if Google returns replacement token metadata",
     },
+    "google_health.export_exercise_tcx": {
+        "tool": "google_health.export_exercise_tcx",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read-only Google Health workout route/location TCX export by exercise data_point_id; stores XML as private artifact metadata only",
+        "writes": "updates token metadata only if Google returns replacement token metadata; stores private runtime artifact",
+    },
+    "google_health.get_sleep_data_points": {
+        "tool": "google_health.get_sleep_data_points",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read-only Google Health sleep sessions, sleep stages, sleep summary, daily log, recovery, and health datapoints for a date range; paginated with page_size <= 25",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
     "google_health.summarize_activity_day": {
         "tool": "google_health.summarize_activity_day",
         "enabled": True,
         "secret_access": "server-side OpenBao OAuth client and refresh token",
-        "scope": "read-only daily log activity summary for steps, calories, distance, active minutes, heart rate, and workouts",
+        "scope": "read-only daily log activity summary for steps, calories, distance, active minutes, heart rate, heart-rate zones, altitude, floors, VO2 max, and workouts",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
+    "google_health.summarize_sleep_day": {
+        "tool": "google_health.summarize_sleep_day",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read-only daily sleep summary for sleep sessions, sleep stages, sleep duration, recovery, daily log, and health datapoints",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
+    "google_health.get_health_metric_data_points": {
+        "tool": "google_health.get_health_metric_data_points",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read-only Google Health metrics for allowlisted data types such as heart rate, resting HR, HRV, recovery, oxygen saturation/SpO2, respiratory rate, weight, body fat, temperature, blood glucose, and daily health datapoints; paginated",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
+    "google_health.summarize_health_day": {
+        "tool": "google_health.summarize_health_day",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read-only daily health metrics summary for heart rate, resting HR, HRV, recovery, oxygen saturation/SpO2, respiratory rate, weight, body fat, temperature, and other allowlisted health datapoints",
         "writes": "updates token metadata only if Google returns replacement token metadata",
     },
     "elevenlabs.request": {
@@ -344,6 +696,9 @@ def extension_for_mime_type(mime_type: str) -> str:
         "audio/ogg": ".ogg",
         "audio/webm": ".webm",
         "audio/flac": ".flac",
+        "application/vnd.garmin.tcx+xml": ".tcx",
+        "application/xml": ".xml",
+        "text/xml": ".xml",
     }.get(normalized, ".bin")
 
 
@@ -1282,12 +1637,138 @@ def google_health_date_json(value: date) -> dict[str, int]:
     }
 
 
-def sanitize_google_health_data_point(data_point: Any) -> Any:
+def google_health_data_type_payload(registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    return {
+        name: {
+            "field": spec["field"],
+            "filter_kind": spec.get("filter_kind"),
+            "required_scope": spec.get("scope"),
+            "description": spec["description"],
+            "supports_raw_points": spec.get("supports_raw_points", False),
+            "supports_daily_rollup": spec.get("supports_daily_rollup", False),
+            **({"max_page_size": spec["max_page_size"]} if "max_page_size" in spec else {}),
+            **({"daily_rollup_field": spec["daily_rollup_field"]} if "daily_rollup_field" in spec else {}),
+        }
+        for name, spec in sorted(registry.items())
+    }
+
+
+def normalize_google_health_data_type(
+    data_type: str,
+    registry: dict[str, dict[str, Any]],
+    *,
+    name: str = "data_type",
+) -> str:
+    if not isinstance(data_type, str) or not data_type.strip():
+        raise CapabilityError(f"{name}_required", allowed=sorted(registry))
+    normalized = data_type.strip()
+    if normalized not in registry:
+        raise CapabilityError(f"{name}_not_allowed", allowed=sorted(registry))
+    return normalized
+
+
+def google_health_filter_date_part(civil_time: str) -> str:
+    return civil_time.split("T", maxsplit=1)[0]
+
+
+def google_health_filter_expression(spec: dict[str, Any], start: str, end: str) -> str:
+    prefix = spec["filter_prefix"]
+    filter_kind = spec["filter_kind"]
+    if filter_kind == "interval":
+        return (
+            f'{prefix}.interval.civil_start_time >= "{start}" '
+            f'AND {prefix}.interval.civil_start_time < "{end}"'
+        )
+    if filter_kind == "sample":
+        return (
+            f'{prefix}.sample_time.civil_time >= "{start}" '
+            f'AND {prefix}.sample_time.civil_time < "{end}"'
+        )
+    if filter_kind == "daily":
+        return (
+            f'{prefix}.date >= "{google_health_filter_date_part(start)}" '
+            f'AND {prefix}.date < "{google_health_filter_date_part(end)}"'
+        )
+    if filter_kind == "session_civil_start":
+        return (
+            f'{prefix}.interval.civil_start_time >= "{start}" '
+            f'AND {prefix}.interval.civil_start_time < "{end}"'
+        )
+    if filter_kind == "sleep_session_civil_end":
+        return (
+            f'{prefix}.interval.civil_end_time >= "{start}" '
+            f'AND {prefix}.interval.civil_end_time < "{end}"'
+        )
+    raise CapabilityError("google_health_filter_kind_not_supported", filter_kind=filter_kind)
+
+
+def google_health_page_size_for_spec(
+    value: int | None,
+    spec: dict[str, Any],
+    *,
+    default: int = 25,
+    maximum: int = 100,
+) -> int:
+    max_page_size = spec.get("max_page_size")
+    effective_maximum = min(maximum, max_page_size) if isinstance(max_page_size, int) else maximum
+    return normalize_page_size(value, default=min(default, effective_maximum), minimum=1, maximum=effective_maximum)
+
+
+def google_health_rollup_field(data_type: str) -> str:
+    spec = GOOGLE_HEALTH_DAILY_ROLLUP_DATA_TYPES[data_type]
+    return str(spec.get("daily_rollup_field") or spec["field"])
+
+
+def google_health_health_rollup_data_types() -> dict[str, dict[str, Any]]:
+    return {
+        name: spec
+        for name, spec in GOOGLE_HEALTH_DAILY_ROLLUP_DATA_TYPES.items()
+        if spec["scope"] == GOOGLE_HEALTH_HEALTH_METRICS_SCOPE or name == "heart-rate"
+    }
+
+
+def google_health_daily_health_metric_data_types() -> dict[str, dict[str, Any]]:
+    return {
+        name: spec
+        for name, spec in GOOGLE_HEALTH_HEALTH_METRIC_DATA_TYPES.items()
+        if spec["filter_kind"] == "daily"
+    }
+
+
+def google_health_exercise_data_point_id_from_name(resource_name: Any) -> str | None:
+    if not isinstance(resource_name, str):
+        return None
+    parts = resource_name.split("/")
+    if len(parts) != 6:
+        return None
+    if parts[0] != "users" or parts[2] != "dataTypes" or parts[3] != "exercise" or parts[4] != "dataPoints":
+        return None
+    data_point_id = parts[5]
+    return data_point_id if GOOGLE_HEALTH_EXERCISE_DATA_POINT_ID_RE.fullmatch(data_point_id) else None
+
+
+def normalize_google_health_exercise_data_point_id(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CapabilityError("exercise_data_point_id_required")
+    normalized = value.strip()
+    if normalized.startswith("users/"):
+        extracted = google_health_exercise_data_point_id_from_name(normalized)
+        if extracted:
+            return extracted
+    if not GOOGLE_HEALTH_EXERCISE_DATA_POINT_ID_RE.fullmatch(normalized) or "/" in normalized:
+        raise CapabilityError("exercise_data_point_id_invalid")
+    return normalized
+
+
+def sanitize_google_health_data_point(data_point: Any, *, expose_exercise_id: bool = False) -> Any:
     if not isinstance(data_point, dict):
         return data_point
+    data_point_id = google_health_exercise_data_point_id_from_name(data_point.get("name")) if expose_exercise_id else None
     sanitized = redacted_json(data_point)
     if isinstance(sanitized, dict):
         sanitized.pop("name", None)
+        if data_point_id:
+            sanitized["data_point_id"] = data_point_id
     return sanitized
 
 
@@ -1301,6 +1782,7 @@ def summarize_google_health_exercise(data_point: Any) -> dict[str, Any]:
     metrics = exercise.get("metricsSummary") if isinstance(exercise.get("metricsSummary"), dict) else {}
     return redacted_json(
         {
+            "dataPointId": data_point.get("data_point_id"),
             "displayName": exercise.get("displayName"),
             "exerciseType": exercise.get("exerciseType"),
             "interval": {
@@ -1328,38 +1810,76 @@ def summarize_google_health_exercise(data_point: Any) -> dict[str, Any]:
     )
 
 
+def summarize_google_health_sleep(data_point: Any) -> dict[str, Any]:
+    if not isinstance(data_point, dict):
+        return {}
+    sleep = data_point.get("sleep")
+    if not isinstance(sleep, dict):
+        return {}
+    stages = sleep.get("stages") if isinstance(sleep.get("stages"), list) else []
+    stage_counts: dict[str, int] = {}
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        stage_type = stage.get("stageType") or stage.get("type")
+        if isinstance(stage_type, str) and stage_type:
+            stage_counts[stage_type] = stage_counts.get(stage_type, 0) + 1
+
+    out_of_bed_segments = sleep.get("outOfBedSegments") if isinstance(sleep.get("outOfBedSegments"), list) else []
+    return redacted_json(
+        {
+            "type": sleep.get("type"),
+            "interval": sleep.get("interval"),
+            "summary": sleep.get("summary"),
+            "metadata": sleep.get("metadata"),
+            "stage_count": len(stages),
+            "stage_types": stage_counts,
+            "out_of_bed_segment_count": len(out_of_bed_segments),
+        }
+    )
+
+
 def google_health_activity_data_types_payload() -> dict[str, Any]:
     return {
         "ok": True,
-        "scope": GOOGLE_HEALTH_ACTIVITY_SCOPE,
+        "required_readonly_scopes": list(GOOGLE_HEALTH_REQUIRED_READONLY_SCOPES),
+        "optional_readonly_scopes_prepared": list(GOOGLE_HEALTH_OPTIONAL_READONLY_SCOPES),
         "source": {
             "discovery": "https://health.googleapis.com/$discovery/rest?version=v4",
             "data_points_list": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list",
+            "daily_rollup": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/dailyRollUp",
+            "tcx_export": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/exportExerciseTcx",
         },
         "notes": [
             "Google Health v4 does not expose a generic users.dataTypes.list endpoint.",
             "Supported names are documented through the DataPoint and DailyRollupDataPoint union fields.",
-            "Live probes with the current activity_and_fitness.readonly scope confirmed raw exercise, steps, and distance access, and daily rollups for the listed activity metrics.",
+            "Path data type names are hyphenated, while list filter prefixes use the documented snake_case field names.",
+            "OAuth scope changes require a new user-consented refresh token in OpenBao; tools return sanitized Google API errors if a scope or data type is unavailable.",
+            "TCX export is explicit and stores the XML as a private runtime artifact; it requires activity_and_fitness.readonly plus location.readonly.",
         ],
-        "raw_data_points": {
-            name: {
-                "field": spec["field"],
-                "description": spec["description"],
-                "supports_raw_points": spec["supports_raw_points"],
-                "supports_daily_rollup": spec["supports_daily_rollup"],
-                **({"max_page_size": spec["max_page_size"]} if "max_page_size" in spec else {}),
-            }
-            for name, spec in sorted(GOOGLE_HEALTH_LISTABLE_ACTIVITY_DATA_TYPES.items())
-        },
+        "activity_data_points": google_health_data_type_payload(GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES),
+        "sleep_data_points": google_health_data_type_payload(GOOGLE_HEALTH_SLEEP_DATA_TYPES),
+        "health_metric_data_points": google_health_data_type_payload(GOOGLE_HEALTH_HEALTH_METRIC_DATA_TYPES),
         "daily_rollup_data_types": {
             name: {
                 "field": spec["field"],
+                "required_scope": spec["scope"],
                 "description": spec["description"],
             }
-            for name, spec in sorted(GOOGLE_HEALTH_DAILY_ACTIVITY_DATA_TYPES.items())
+            for name, spec in sorted(GOOGLE_HEALTH_DAILY_ROLLUP_DATA_TYPES.items())
+        },
+        "tcx_export": {
+            "tool": "google_health.export_exercise_tcx",
+            "required_scopes": [GOOGLE_HEALTH_ACTIVITY_SCOPE, GOOGLE_HEALTH_LOCATION_SCOPE],
+            "input": "exercise_data_point_id from google_health.get_exercise_data_points or google_health.get_activity_data_points(data_type='exercise')",
+            "response": "private artifact metadata only",
         },
         "recommended_tools": [
+            "google_health.get_activity_data_points for paginated activity, steps, distance, calories, active minutes, heart rate, VO2, altitude, and route-adjacent metrics",
             "google_health.get_exercise_data_points for paginated exercise/workout sessions in a date range",
+            "google_health.export_exercise_tcx for workout route/TCX export artifacts when location scope is available",
+            "google_health.get_sleep_data_points and google_health.summarize_sleep_day for sleep sessions, sleep stages, recovery, and daily log use",
+            "google_health.get_health_metric_data_points and google_health.summarize_health_day for heart rate, resting HR, HRV, SpO2, respiratory rate, weight, body fat, temperature, and recovery metrics",
             "google_health.summarize_activity_day for daily log, brain, and fitness data sync summaries",
         ],
     }
@@ -1372,6 +1892,8 @@ async def google_health_list_data_points(
     filter_expression: str,
     page_size: int,
     page_token: str | None,
+    required_scope: str | None = None,
+    expose_exercise_ids: bool = False,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "filter": filter_expression,
@@ -1407,12 +1929,38 @@ async def google_health_list_data_points(
         "filter": filter_expression,
         "page_size": page_size,
         "data_point_count": len(data_points),
-        "data_points": [sanitize_google_health_data_point(item) for item in data_points],
+        "data_points": [sanitize_google_health_data_point(item, expose_exercise_id=expose_exercise_ids) for item in data_points],
     }
+    if required_scope:
+        result["required_scope"] = required_scope
     next_page_token = payload.get("nextPageToken")
     if isinstance(next_page_token, str) and next_page_token:
         result["next_page_token"] = next_page_token
     return result
+
+
+async def google_health_list_data_points_or_error(
+    access_token: str,
+    *,
+    data_type: str,
+    filter_expression: str,
+    page_size: int,
+    page_token: str | None = None,
+    required_scope: str | None = None,
+    expose_exercise_ids: bool = False,
+) -> dict[str, Any]:
+    try:
+        return await google_health_list_data_points(
+            access_token,
+            data_type=data_type,
+            filter_expression=filter_expression,
+            page_size=page_size,
+            page_token=page_token,
+            required_scope=required_scope,
+            expose_exercise_ids=expose_exercise_ids,
+        )
+    except CapabilityError as error:
+        return capability_error_payload(error)
 
 
 async def google_health_daily_rollup(
@@ -1463,7 +2011,7 @@ async def google_health_daily_rollup(
     rollups = payload.get("rollupDataPoints", [])
     if not isinstance(rollups, list):
         rollups = []
-    field_name = GOOGLE_HEALTH_DAILY_ACTIVITY_DATA_TYPES[data_type]["field"]
+    field_name = google_health_rollup_field(data_type)
     first = rollups[0] if rollups and isinstance(rollups[0], dict) else {}
     value = first.get(field_name) if isinstance(first, dict) else None
     return {
@@ -1471,6 +2019,7 @@ async def google_health_daily_rollup(
         "endpoint": "google_health.data_points.daily_rollup",
         "data_type": data_type,
         "field": field_name,
+        "required_scope": GOOGLE_HEALTH_DAILY_ROLLUP_DATA_TYPES[data_type]["scope"],
         "rollup_count": len(rollups),
         "value": redacted_json(value),
     }
@@ -1482,15 +2031,15 @@ async def summarize_google_health_activity_day(access_token: str, target_date: d
         rollups[data_type] = await google_health_daily_rollup(access_token, data_type=data_type, target_date=target_date)
 
     next_day = target_date + timedelta(days=1)
+    exercise_spec = GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES["exercise"]
     exercises = await google_health_list_data_points(
         access_token,
         data_type="exercise",
-        filter_expression=(
-            f'exercise.interval.civil_start_time >= "{target_date.isoformat()}" '
-            f'AND exercise.interval.civil_start_time < "{next_day.isoformat()}"'
-        ),
+        filter_expression=google_health_filter_expression(exercise_spec, target_date.isoformat(), next_day.isoformat()),
         page_size=10,
         page_token=None,
+        required_scope=exercise_spec["scope"],
+        expose_exercise_ids=True,
     )
     exercise_points = exercises.get("data_points", [])
     exercise_summaries = [
@@ -1510,6 +2059,124 @@ async def summarize_google_health_activity_day(access_token: str, target_date: d
             "has_more": bool(exercises.get("next_page_token")),
             "summaries": exercise_summaries,
         },
+    }
+
+
+async def summarize_google_health_sleep_day(access_token: str, target_date: date) -> dict[str, Any]:
+    next_day = target_date + timedelta(days=1)
+    sleep_spec = GOOGLE_HEALTH_SLEEP_DATA_TYPES["sleep"]
+    sleep_points = await google_health_list_data_points(
+        access_token,
+        data_type="sleep",
+        filter_expression=google_health_filter_expression(sleep_spec, target_date.isoformat(), next_day.isoformat()),
+        page_size=10,
+        page_token=None,
+        required_scope=sleep_spec["scope"],
+    )
+    data_points = sleep_points.get("data_points", [])
+    summaries = [
+        summarize_google_health_sleep(item)
+        for item in data_points
+        if isinstance(item, dict)
+    ]
+    return {
+        "ok": True,
+        "endpoint": "google_health.sleep_day_summary",
+        "date": target_date.isoformat(),
+        "scope": GOOGLE_HEALTH_SLEEP_SCOPE,
+        "sleep": {
+            "data_point_count": sleep_points.get("data_point_count"),
+            "has_more": bool(sleep_points.get("next_page_token")),
+            "summaries": summaries,
+        },
+    }
+
+
+async def summarize_google_health_health_day(access_token: str, target_date: date) -> dict[str, Any]:
+    rollups: dict[str, Any] = {}
+    for data_type in google_health_health_rollup_data_types():
+        rollups[data_type] = await google_health_daily_rollup(access_token, data_type=data_type, target_date=target_date)
+
+    next_day = target_date + timedelta(days=1)
+    daily_metrics: dict[str, Any] = {}
+    for data_type, spec in google_health_daily_health_metric_data_types().items():
+        daily_metrics[data_type] = await google_health_list_data_points_or_error(
+            access_token,
+            data_type=data_type,
+            filter_expression=google_health_filter_expression(spec, target_date.isoformat(), next_day.isoformat()),
+            page_size=5,
+            required_scope=spec["scope"],
+        )
+
+    return {
+        "ok": True,
+        "endpoint": "google_health.health_day_summary",
+        "date": target_date.isoformat(),
+        "scope": GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
+        "daily_rollups": rollups,
+        "daily_metric_records": daily_metrics,
+    }
+
+
+async def export_google_health_exercise_tcx(
+    access_token: str,
+    *,
+    exercise_data_point_id: str,
+    partial_data: bool | None,
+    resource_url: str,
+) -> dict[str, Any]:
+    endpoint = (
+        "https://health.googleapis.com/v4/users/me/dataTypes/exercise/"
+        f"dataPoints/{exercise_data_point_id}:exportExerciseTcx"
+    )
+    params: dict[str, Any] = {"alt": "media"}
+    if partial_data is not None:
+        params["partialData"] = partial_data
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            endpoint,
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.garmin.tcx+xml, application/xml"},
+            params=params,
+        )
+
+    if response.status_code != 200:
+        raise CapabilityError("google_health_tcx_export_failed", **sanitized_api_error(response))
+    if len(response.content) > MAX_ARTIFACT_DOWNLOAD_BYTES:
+        raise CapabilityError(
+            "google_health_tcx_artifact_too_large",
+            byte_size=len(response.content),
+            max_artifact_bytes=MAX_ARTIFACT_DOWNLOAD_BYTES,
+        )
+
+    content_type = response.headers.get("content-type", "application/vnd.garmin.tcx+xml")
+    if is_json_content_type(content_type):
+        raise CapabilityError(
+            "google_health_tcx_unexpected_json_response",
+            message="TCX export returned JSON despite alt=media; refusing to inline or store it as route data.",
+        )
+
+    artifact = store_artifact(
+        response.content,
+        "application/vnd.garmin.tcx+xml",
+        {
+            "kind": "google_health_exercise_tcx",
+            "exercise_data_point_id": exercise_data_point_id,
+            "required_scopes": [GOOGLE_HEALTH_ACTIVITY_SCOPE, GOOGLE_HEALTH_LOCATION_SCOPE],
+        },
+    )
+    download_url = artifact_download_url(resource_url, artifact["artifact_id"])
+    return {
+        "ok": True,
+        "endpoint": "google_health.exercise_tcx_export",
+        "artifact_id": artifact["artifact_id"],
+        "download_url": download_url,
+        "mime_type": artifact["mime_type"],
+        "byte_size": artifact["byte_size"],
+        "sha256": artifact["sha256"],
+        "created_at": artifact["created_at"],
+        "exercise_data_point_id": exercise_data_point_id,
+        "required_scopes": [GOOGLE_HEALTH_ACTIVITY_SCOPE, GOOGLE_HEALTH_LOCATION_SCOPE],
     }
 
 
@@ -1854,21 +2521,24 @@ def build_mcp() -> FastMCP:
 
     @mcp.tool(name="google_health.list_data_types")
     async def google_health_list_data_types(ctx: Context) -> dict[str, Any]:
-        """List documented Google Health fitness data types for exercise, workout, activity, daily log, steps, calories, distance, active minutes, heart rate, health datapoints, and date range tools."""
+        """List documented Google Health fitness, exercise, workout, activity, sleep, health metrics, heart rate, HRV, recovery, weight, body fat, oxygen saturation, respiratory rate, route, location, TCX, health datapoints, date range tools, and required readonly scopes."""
         emit_event("mcp_tool_call", tool="google_health.list_data_types", client_id="heisenberg-access-mcp-env-token")
         return google_health_activity_data_types_payload()
 
-    @mcp.tool(name="google_health.get_exercise_data_points")
-    async def google_health_get_exercise_data_points(
+    @mcp.tool(name="google_health.get_activity_data_points")
+    async def google_health_get_activity_data_points(
         ctx: Context,
+        data_type: str = "steps",
         start_time: str | None = None,
         end_time: str | None = None,
         page_size: int | None = None,
         page_token: str | None = None,
     ) -> dict[str, Any]:
-        """Read paginated Google Health exercise/workout fitness data points for a civil date range; useful for daily log, activity sync, workout history, distance, calories, steps, and health datapoints context."""
-        emit_event("mcp_tool_call", tool="google_health.get_exercise_data_points", client_id="heisenberg-access-mcp-env-token")
+        """Read paginated Google Health activity fitness data points by allowlisted data_type for daily log and activity sync: steps, distance, calories, active minutes, heart rate, heart-rate zones, VO2 max, altitude, exercise/workout, and route-adjacent metrics."""
+        emit_event("mcp_tool_call", tool="google_health.get_activity_data_points", client_id="heisenberg-access-mcp-env-token")
         try:
+            normalized_data_type = normalize_google_health_data_type(data_type, GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES)
+            spec = GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES[normalized_data_type]
             start = normalize_google_health_civil_time(
                 start_time,
                 default=google_health_default_start_date(30),
@@ -1879,17 +2549,66 @@ def build_mcp() -> FastMCP:
                 default=google_health_default_end_date(),
                 name="end_time",
             )
-            normalized_page_size = normalize_page_size(page_size, default=10, minimum=1, maximum=25)
+            normalized_page_size = google_health_page_size_for_spec(page_size, spec)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await google_health_list_data_points(
+                access_token,
+                data_type=normalized_data_type,
+                filter_expression=google_health_filter_expression(spec, start, end),
+                page_size=normalized_page_size,
+                page_token=page_token.strip() if isinstance(page_token, str) and page_token.strip() else None,
+                required_scope=spec["scope"],
+                expose_exercise_ids=normalized_data_type == "exercise",
+            )
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.get_activity_data_points",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.get_activity_data_points", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.get_activity_data_points", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.get_exercise_data_points")
+    async def google_health_get_exercise_data_points(
+        ctx: Context,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Read paginated Google Health exercise/workout fitness sessions for a civil date range; useful for daily log, activity sync, workout history, route/TCX export IDs, distance, calories, steps, and health datapoints context."""
+        emit_event("mcp_tool_call", tool="google_health.get_exercise_data_points", client_id="heisenberg-access-mcp-env-token")
+        try:
+            spec = GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES["exercise"]
+            start = normalize_google_health_civil_time(
+                start_time,
+                default=google_health_default_start_date(30),
+                name="start_time",
+            )
+            end = normalize_google_health_civil_time(
+                end_time,
+                default=google_health_default_end_date(),
+                name="end_time",
+            )
+            normalized_page_size = google_health_page_size_for_spec(page_size, spec, default=10)
             access_token, wrote_metadata = await refresh_google_access_token(openbao)
             payload = await google_health_list_data_points(
                 access_token,
                 data_type="exercise",
-                filter_expression=(
-                    f'exercise.interval.civil_start_time >= "{start}" '
-                    f'AND exercise.interval.civil_start_time < "{end}"'
-                ),
+                filter_expression=google_health_filter_expression(spec, start, end),
                 page_size=normalized_page_size,
                 page_token=page_token.strip() if isinstance(page_token, str) and page_token.strip() else None,
+                required_scope=spec["scope"],
+                expose_exercise_ids=True,
             )
             payload["token_metadata_updated"] = wrote_metadata
             return payload
@@ -1908,9 +2627,92 @@ def build_mcp() -> FastMCP:
             emit_event("capability_error", tool="google_health.get_exercise_data_points", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
+    @mcp.tool(name="google_health.export_exercise_tcx")
+    async def google_health_export_exercise_tcx(
+        ctx: Context,
+        exercise_data_point_id: str,
+        partial_data: bool | None = None,
+    ) -> dict[str, Any]:
+        """Export a Google Health exercise/workout route as TCX using an allowlisted exercise data_point_id; read-only, requires activity and location scopes, stores route/location XML as a private artifact and returns metadata only."""
+        emit_event("mcp_tool_call", tool="google_health.export_exercise_tcx", client_id="heisenberg-access-mcp-env-token")
+        try:
+            normalized_data_point_id = normalize_google_health_exercise_data_point_id(exercise_data_point_id)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await export_google_health_exercise_tcx(
+                access_token,
+                exercise_data_point_id=normalized_data_point_id,
+                partial_data=partial_data,
+                resource_url=resource_url,
+            )
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.export_exercise_tcx",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.export_exercise_tcx", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.export_exercise_tcx", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.get_sleep_data_points")
+    async def google_health_get_sleep_data_points(
+        ctx: Context,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Read paginated Google Health sleep sessions for sleep, sleep stages, sleep summary, recovery, daily log, health datapoints, and date range queries; page_size is capped at 25."""
+        emit_event("mcp_tool_call", tool="google_health.get_sleep_data_points", client_id="heisenberg-access-mcp-env-token")
+        try:
+            spec = GOOGLE_HEALTH_SLEEP_DATA_TYPES["sleep"]
+            start = normalize_google_health_civil_time(
+                start_time,
+                default=google_health_default_start_date(30),
+                name="start_time",
+            )
+            end = normalize_google_health_civil_time(
+                end_time,
+                default=google_health_default_end_date(),
+                name="end_time",
+            )
+            normalized_page_size = google_health_page_size_for_spec(page_size, spec, default=10)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await google_health_list_data_points(
+                access_token,
+                data_type="sleep",
+                filter_expression=google_health_filter_expression(spec, start, end),
+                page_size=normalized_page_size,
+                page_token=page_token.strip() if isinstance(page_token, str) and page_token.strip() else None,
+                required_scope=spec["scope"],
+            )
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.get_sleep_data_points",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.get_sleep_data_points", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.get_sleep_data_points", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
     @mcp.tool(name="google_health.summarize_activity_day")
     async def google_health_summarize_activity_day(ctx: Context, date: str) -> dict[str, Any]:
-        """Summarize one Google Health activity day for daily log / brain / fitness data sync: steps, calories, distance, active minutes, heart rate, exercise, workouts, activity, health datapoints, and date range context."""
+        """Summarize one Google Health activity day for daily log / brain / fitness data sync: steps, calories, distance, active minutes, heart rate, heart-rate zones, altitude, floors, VO2 max, exercise, workouts, activity, health datapoints, and date range context."""
         emit_event("mcp_tool_call", tool="google_health.summarize_activity_day", client_id="heisenberg-access-mcp-env-token")
         try:
             target_date = parse_iso_date(date)
@@ -1931,6 +2733,107 @@ def build_mcp() -> FastMCP:
             return capability_error_payload(error)
         except httpx.HTTPError as error:
             emit_event("capability_error", tool="google_health.summarize_activity_day", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.summarize_sleep_day")
+    async def google_health_summarize_sleep_day(ctx: Context, date: str) -> dict[str, Any]:
+        """Summarize one Google Health sleep day for daily log, brain, recovery, sleep stages, sleep duration, sleep summary, health metrics, and fitness data sync without dumping full raw sleep datapoints."""
+        emit_event("mcp_tool_call", tool="google_health.summarize_sleep_day", client_id="heisenberg-access-mcp-env-token")
+        try:
+            target_date = parse_iso_date(date)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await summarize_google_health_sleep_day(access_token, target_date)
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.summarize_sleep_day",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.summarize_sleep_day", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.summarize_sleep_day", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.get_health_metric_data_points")
+    async def google_health_get_health_metric_data_points(
+        ctx: Context,
+        data_type: str,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        page_size: int | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Read paginated Google Health health metrics by allowlisted data_type for daily log, recovery, heart rate, resting HR, HRV, oxygen saturation / SpO2, respiratory rate, weight, body fat, temperature, blood glucose, and health datapoints date range queries."""
+        emit_event("mcp_tool_call", tool="google_health.get_health_metric_data_points", client_id="heisenberg-access-mcp-env-token")
+        try:
+            normalized_data_type = normalize_google_health_data_type(data_type, GOOGLE_HEALTH_HEALTH_METRIC_DATA_TYPES)
+            spec = GOOGLE_HEALTH_HEALTH_METRIC_DATA_TYPES[normalized_data_type]
+            start = normalize_google_health_civil_time(
+                start_time,
+                default=google_health_default_start_date(30),
+                name="start_time",
+            )
+            end = normalize_google_health_civil_time(
+                end_time,
+                default=google_health_default_end_date(),
+                name="end_time",
+            )
+            normalized_page_size = google_health_page_size_for_spec(page_size, spec)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await google_health_list_data_points(
+                access_token,
+                data_type=normalized_data_type,
+                filter_expression=google_health_filter_expression(spec, start, end),
+                page_size=normalized_page_size,
+                page_token=page_token.strip() if isinstance(page_token, str) and page_token.strip() else None,
+                required_scope=spec["scope"],
+            )
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.get_health_metric_data_points",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.get_health_metric_data_points", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.get_health_metric_data_points", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.summarize_health_day")
+    async def google_health_summarize_health_day(ctx: Context, date: str) -> dict[str, Any]:
+        """Summarize one Google Health health metrics day for daily log, brain, recovery, heart rate, resting HR, HRV, oxygen saturation / SpO2, respiratory rate, weight, body fat, temperature, blood glucose, and health datapoints."""
+        emit_event("mcp_tool_call", tool="google_health.summarize_health_day", client_id="heisenberg-access-mcp-env-token")
+        try:
+            target_date = parse_iso_date(date)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await summarize_google_health_health_day(access_token, target_date)
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.summarize_health_day",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.summarize_health_day", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.summarize_health_day", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
     @mcp.tool(name="elevenlabs.request")
