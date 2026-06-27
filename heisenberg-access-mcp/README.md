@@ -12,6 +12,7 @@ The MCP exposes status tools plus narrow service capabilities:
 - `elevenlabs.request(...)` is a service-scoped ElevenLabs request tool for `https://api.elevenlabs.io`. The API key is never returned. Known binary responses are stored as private artifacts, large JSON is redacted before artifact storage, and large text-like responses are refused.
 - `homeassistant.request(...)` is a service-scoped Home Assistant request tool for the `url` configured in OpenBao.
 - `freshrss.request(...)` is a service-scoped FreshRSS request tool for the `api_url` configured in OpenBao.
+- `tandoor.request(...)` is a service-scoped Tandoor request tool for the `url` configured in OpenBao.
 
 It intentionally does not provide a `read_secret(path)` style tool.
 
@@ -47,6 +48,7 @@ Generic request tools are scoped to one configured service, not to arbitrary HTT
 
 - `homeassistant.request` joins the caller-provided `path` onto the Home Assistant `url` from `secret/data/heisenberg/homeassistant` and adds the bearer token server-side.
 - `freshrss.request` joins `path` onto the FreshRSS `api_url` from `secret/data/heisenberg/freshrss`, obtains a FreshRSS Google Reader auth token server-side, and uses it without returning it.
+- `tandoor.request` joins `path` onto the Tandoor `url` from `secret/data/heisenberg/tandoor` and adds the bearer token server-side.
 - `elevenlabs.request` joins `path` onto `https://api.elevenlabs.io` and adds the API key server-side.
 
 The request tools reject absolute URLs, host changes, query strings in `path`, and `.`/`..` path traversal. Use `params` for query parameters.
@@ -89,6 +91,7 @@ The policy grants read access to these KV-v2 secret paths:
 
 - `secret/data/heisenberg/homeassistant`
 - `secret/data/heisenberg/freshrss`
+- `secret/data/heisenberg/tandoor`
 - `secret/data/heisenberg/elevenlabs`
 - `secret/data/heisenberg/google-health/oauth-client`
 - `secret/data/heisenberg/google-health/oauth-token`
@@ -100,6 +103,12 @@ It grants update access only to:
 - `secret/data/heisenberg/x/oauth`
 
 Those update capabilities are for provider token refresh/metadata only. Do not add a generic secret-reading MCP tool or a tool that returns raw API keys/tokens.
+
+The Tandoor secret shape is explicit and minimal:
+
+```json
+{ "url": "https://tandoor.example.invalid", "api_key": "..." }
+```
 
 Example, run on Lando with a root token loaded only for this setup session:
 
@@ -129,6 +138,6 @@ Tools should stay explicit capabilities such as:
 - `x.get_tweet`
 - `google_health.access_status`
 - `elevenlabs.text_to_speech`
-- `elevenlabs.request`, `homeassistant.request`, and `freshrss.request` scoped to fixed service base URLs
+- `elevenlabs.request`, `homeassistant.request`, `freshrss.request`, and `tandoor.request` scoped to fixed service base URLs
 
 Each tool should map to a narrow OpenBao policy and application-level behavior. Do not add generic secret-reading tools.

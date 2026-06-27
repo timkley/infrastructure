@@ -36,6 +36,7 @@ OPENBAO_SECRET_MOUNT = "secret"
 OPENBAO_ALLOWED_SECRETS = {
     "homeassistant": "heisenberg/homeassistant",
     "freshrss": "heisenberg/freshrss",
+    "tandoor": "heisenberg/tandoor",
     "elevenlabs": "heisenberg/elevenlabs",
     "google_health_oauth_client": "heisenberg/google-health/oauth-client",
     "google_health_oauth_token": "heisenberg/google-health/oauth-token",
@@ -172,6 +173,12 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "enabled": True,
         "secret_access": "server-side OpenBao FreshRSS API password",
         "scope": "configured FreshRSS API base URL only",
+    },
+    "tandoor.request": {
+        "tool": "tandoor.request",
+        "enabled": True,
+        "secret_access": "server-side OpenBao Tandoor API key",
+        "scope": "configured Tandoor base URL only",
     },
 }
 
@@ -1670,6 +1677,57 @@ def build_mcp() -> FastMCP:
             return capability_error_payload(error)
         except httpx.HTTPError as error:
             emit_event("capability_error", tool="freshrss.request", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="tandoor.request")
+    async def tandoor_request(
+        ctx: Context,
+        method: str = "GET",
+        path: str = "/api/recipe/",
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        response_mode: str = "auto",
+        confirm: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Request Tandoor within the configured base URL using server-side bearer auth."""
+        emit_event("mcp_tool_call", tool="tandoor.request", client_id="heisenberg-access-mcp-env-token")
+        try:
+            if not dry_run:
+                ensure_write_confirmed(normalize_service_method(method), confirm)
+            secret = await openbao.read("tandoor")
+            base_url = required_secret_value(secret, "url")
+            api_key = required_secret_value(secret, "api_key")
+            return await service_request(
+                base_url=base_url,
+                path=path,
+                method=method,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json, text/*;q=0.9, */*;q=0.1",
+                },
+                resource_url=resource_url,
+                service_name="tandoor",
+                params=params,
+                json_body=json_body,
+                form_body=None,
+                response_mode=response_mode,
+                confirm=confirm,
+                dry_run=dry_run,
+            )
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="tandoor.request",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="tandoor.request", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="tandoor.request", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
     @mcp.tool(name="elevenlabs.text_to_speech")

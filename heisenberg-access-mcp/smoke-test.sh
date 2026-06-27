@@ -61,6 +61,7 @@ async def main() -> None:
                 "google_health.access_status",
                 "homeassistant.request",
                 "freshrss.request",
+                "tandoor.request",
                 "elevenlabs.request",
                 "elevenlabs.text_to_speech",
             }
