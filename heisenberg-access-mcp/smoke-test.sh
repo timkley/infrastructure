@@ -58,6 +58,8 @@ async def main() -> None:
                 "access_status",
                 "openbao_status",
                 "x.get_tweet",
+                "x.list_bookmarks",
+                "x.unbookmark_tweets",
                 "google_health.access_status",
                 "google_health.list_data_types",
                 "google_health.get_activity_data_points",

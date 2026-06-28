@@ -7,6 +7,8 @@ The MCP exposes status tools plus narrow service capabilities:
 - `access_status` reports MCP readiness and the declared capability registry.
 - `openbao_status` reports whether OpenBao is reachable and ready, using only safe status fields.
 - `x.get_tweet(tweet_id_or_url)` reads one public tweet through server-side X OAuth, refreshes the stored OAuth token when needed, verifies that the author is not protected, and returns tweet text, author metadata, URL, created time, public metrics, and media URLs.
+- `x.list_bookmarks(page_size?, pagination_token?)` reads Tim's current X bookmarks through server-side X OAuth, with pagination and tweet/media/author context for Brain ingest.
+- `x.unbookmark_tweets(tweet_ids_or_urls, confirm?, dry_run?)` removes one or more X bookmarks after successful ingest. It is a mutating X write and requires `confirm=true`; use `dry_run=true` to inspect the target IDs without writing.
 - `google_health.access_status` refreshes a Google access token server-side and calls the harmless Google Health API v4 `users/me/identity` endpoint to report access/scope status without returning health datapoints.
 - `google_health.list_data_types` documents the Google Health API v4 fitness, activity, workout, sleep, health metrics, route/location, TCX, and required readonly OAuth scopes exposed by the explicit tool allowlists.
 - `google_health.get_activity_data_points(...)` reads paginated allowlisted activity datapoints such as steps, distance, calories, active minutes, heart-rate zones, heart rate, altitude, VO2, and exercise/workout sessions.
@@ -48,6 +50,33 @@ curl -H "Authorization: Bearer $HEISENBERG_ACCESS_MCP_TOKEN" \
 Large artifacts above the server download limit are refused before storage instead of streamed through MCP. Small JSON/text ElevenLabs responses can be returned directly by `elevenlabs.request`; malformed JSON is refused, large JSON responses are redacted before artifact storage, and large text-like responses are refused because reliable secret redaction is not guaranteed. Large list-style operations should be configured with provider-side pagination or replaced by a summarizing capability.
 
 Use dedicated tools, such as `elevenlabs.text_to_speech`, for binary or high-level workflows where the server should manage artifacts and metadata deliberately.
+
+## X Bookmarks
+
+X tools use the server-side OAuth token in `secret/data/heisenberg/x/oauth`. Agents never receive the raw access or refresh token. The token should include the X OAuth scopes needed for the workflows:
+
+- `tweet.read`
+- `users.read`
+- `bookmark.read`
+- `bookmark.write` for unbookmarking
+- `offline.access` for refresh-token rotation
+
+The X Bookmarks API requires the authenticated X user ID in the path. The MCP first uses `user_id`, `x_user_id`, `authenticated_user_id`, or `user.id` from the OpenBao secret when present. If it is absent, it calls X `/2/users/me` server-side, then caches `user_id` as non-secret metadata back to the same OpenBao secret.
+
+Useful tools:
+
+- `x.list_bookmarks(page_size?, pagination_token?)` calls `GET /2/users/{id}/bookmarks`, caps `page_size` at 100, and returns `tweets`, `result_count`, and `next_token`. Use `next_token` as the next call's `pagination_token`.
+- `x.unbookmark_tweets(tweet_ids_or_urls, confirm?, dry_run?)` calls `DELETE /2/users/{id}/bookmarks/{tweet_id}` for each normalized tweet ID. Pass a one-item list for a single tweet. It requires `confirm=true` unless `dry_run=true`.
+
+Brain ingest should switch away from local `~/.config/heisenberg/x-api.json` credentials and use this MCP flow instead:
+
+1. Call `x.list_bookmarks(page_size=100)` and continue with `pagination_token` until `next_token` is empty.
+2. Ingest the returned tweet objects into `raw/bookmarks/` and `wiki/sources/x/`.
+3. Keep the successfully ingested tweet IDs.
+4. Call `x.unbookmark_tweets(tweet_ids_or_urls=[...], dry_run=true)` for a final safety check.
+5. Only after the ingest artifacts exist and the IDs match, call `x.unbookmark_tweets(..., confirm=true)`.
+
+Do not unbookmark tweets speculatively. Failed or partially ingested tweets should remain bookmarked and be retried later.
 
 ## Google Health Fitness, Sleep, and Metrics
 
@@ -170,6 +199,8 @@ The script checks `/health`, performs an MCP initialize/list-tools/call flow thr
 Tools should stay explicit capabilities such as:
 
 - `x.get_tweet`
+- `x.list_bookmarks`
+- `x.unbookmark_tweets`
 - `google_health.access_status`
 - `google_health.list_data_types`
 - `google_health.get_activity_data_points`

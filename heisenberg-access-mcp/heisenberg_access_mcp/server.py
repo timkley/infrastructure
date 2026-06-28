@@ -79,12 +79,16 @@ SAFE_OPENBAO_FIELDS = (
     "storage_type",
 )
 X_TWEET_ID_RE = re.compile(r"(?<!\d)(\d{5,25})(?!\d)")
+X_USER_ID_RE = re.compile(r"^\d{1,25}$")
 ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 ELEVENLABS_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 GOOGLE_HEALTH_CIVIL_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?$")
 GOOGLE_HEALTH_EXERCISE_DATA_POINT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 TOKEN_REFRESH_SKEW = timedelta(minutes=5)
+X_BOOKMARK_DEFAULT_PAGE_SIZE = 25
+X_BOOKMARK_MAX_PAGE_SIZE = 100
+X_UNBOOKMARK_MAX_TWEETS = 100
 GOOGLE_HEALTH_ACTIVITY_SCOPE = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
 GOOGLE_HEALTH_SLEEP_SCOPE = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
 GOOGLE_HEALTH_HEALTH_METRICS_SCOPE = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
@@ -507,6 +511,20 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "enabled": True,
         "secret_access": "server-side OpenBao OAuth token",
         "writes": "refreshes OAuth tokens back to OpenBao when needed",
+    },
+    "x.list_bookmarks": {
+        "tool": "x.list_bookmarks",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth token",
+        "scope": "read current X bookmarks for Tim through the official X API, with pagination and tweet/media/author context for Brain ingest",
+        "writes": "refreshes OAuth tokens and may cache X user_id metadata in OpenBao when needed",
+    },
+    "x.unbookmark_tweets": {
+        "tool": "x.unbookmark_tweets",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth token",
+        "scope": "remove one or more X bookmarks after successful ingest; supports dry_run",
+        "writes": "calls X bookmark delete endpoints only with confirm=true; also refreshes OAuth tokens when needed",
     },
     "google_health.access_status": {
         "tool": "google_health.access_status",
@@ -1391,6 +1409,68 @@ def extract_tweet_id(tweet_id_or_url: str) -> str:
     return match.group(1)
 
 
+def normalize_x_tweet_ids(tweet_ids_or_urls: Any) -> list[str]:
+    if isinstance(tweet_ids_or_urls, str):
+        values: list[Any] = [tweet_ids_or_urls]
+    elif isinstance(tweet_ids_or_urls, list):
+        values = tweet_ids_or_urls
+    else:
+        raise CapabilityError("tweet_ids_or_urls_must_be_string_or_list")
+
+    tweet_ids: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise CapabilityError("tweet_id_or_url_must_be_non_empty_string")
+        tweet_id = extract_tweet_id(value)
+        if tweet_id in seen:
+            continue
+        seen.add(tweet_id)
+        tweet_ids.append(tweet_id)
+
+    if not tweet_ids:
+        raise CapabilityError("tweet_ids_required")
+    if len(tweet_ids) > X_UNBOOKMARK_MAX_TWEETS:
+        raise CapabilityError("too_many_tweet_ids", maximum=X_UNBOOKMARK_MAX_TWEETS, provided=len(tweet_ids))
+    return tweet_ids
+
+
+def normalize_x_pagination_token(pagination_token: str | None) -> str | None:
+    if pagination_token is None:
+        return None
+    if not isinstance(pagination_token, str) or not pagination_token.strip():
+        raise CapabilityError("pagination_token_must_be_non_empty_string")
+    normalized = pagination_token.strip()
+    if len(normalized) > 2048:
+        raise CapabilityError("pagination_token_too_long", maximum=2048)
+    return normalized
+
+
+def normalize_x_user_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if not X_USER_ID_RE.fullmatch(normalized):
+        raise CapabilityError("x_user_id_invalid")
+    return normalized
+
+
+def x_user_id_from_oauth(oauth: dict[str, Any]) -> str | None:
+    for key in ("user_id", "x_user_id", "authenticated_user_id"):
+        user_id = normalize_x_user_id(oauth.get(key))
+        if user_id is not None:
+            return user_id
+
+    user = oauth.get("user")
+    if isinstance(user, dict):
+        user_id = normalize_x_user_id(user.get("id"))
+        if user_id is not None:
+            return user_id
+    return None
+
+
 async def refresh_x_access_token(openbao: OpenBaoKV2, oauth: dict[str, Any]) -> dict[str, Any]:
     client_id = required_secret_value(oauth, "client_id")
     refresh_token = required_secret_value(oauth, "refresh_token")
@@ -1422,6 +1502,8 @@ async def refresh_x_access_token(openbao: OpenBaoKV2, oauth: dict[str, Any]) -> 
     refreshed["access_token"] = access_token
     if isinstance(payload.get("refresh_token"), str) and payload["refresh_token"]:
         refreshed["refresh_token"] = payload["refresh_token"]
+    if isinstance(payload.get("scope"), str) and payload["scope"]:
+        refreshed["scope"] = payload["scope"]
 
     expires_in = payload.get("expires_in")
     if isinstance(expires_in, (int, float)) and expires_in > 0:
@@ -1433,6 +1515,55 @@ async def refresh_x_access_token(openbao: OpenBaoKV2, oauth: dict[str, Any]) -> 
     await openbao.write("x_oauth", refreshed)
     emit_event("oauth_token_refreshed", provider="x")
     return refreshed
+
+
+async def fetch_x_authenticated_user(access_token: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(
+            "https://api.x.com/2/users/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"user.fields": "id,name,username"},
+        )
+
+    if response.status_code != 200:
+        raise CapabilityError("x_authenticated_user_request_failed", **sanitized_api_error(response))
+
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as error:
+        raise CapabilityError("x_authenticated_user_invalid_json") from error
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise CapabilityError("x_authenticated_user_missing_data")
+    if normalize_x_user_id(data.get("id")) is None:
+        raise CapabilityError("x_authenticated_user_missing_id")
+    return data
+
+
+async def ensure_x_user_id(openbao: OpenBaoKV2, oauth: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    user_id = x_user_id_from_oauth(oauth)
+    if user_id is not None:
+        return oauth, user_id
+
+    try:
+        user = await fetch_x_authenticated_user(required_secret_value(oauth, "access_token"))
+    except CapabilityError as error:
+        if error.code != "x_authenticated_user_request_failed" or error.details.get("http_status") != 401:
+            raise
+        oauth = await refresh_x_access_token(openbao, oauth)
+        user = await fetch_x_authenticated_user(required_secret_value(oauth, "access_token"))
+
+    user_id = normalize_x_user_id(user.get("id"))
+    if user_id is None:
+        raise CapabilityError("x_authenticated_user_missing_id")
+
+    updated = dict(oauth)
+    updated["user_id"] = user_id
+    updated["user_metadata_updated_at"] = iso_now()
+    await openbao.write("x_oauth", updated)
+    emit_event("x_user_id_cached")
+    return updated, user_id
 
 
 def extract_x_media_urls(media: list[Any]) -> list[str]:
@@ -1453,6 +1584,45 @@ def extract_x_media_urls(media: list[Any]) -> list[str]:
                 if isinstance(value, str) and value and value not in urls:
                     urls.append(value)
     return urls
+
+
+def x_media_for_tweet(tweet: dict[str, Any], media: list[Any]) -> list[dict[str, Any]]:
+    attachments = tweet.get("attachments")
+    if not isinstance(attachments, dict):
+        return []
+    media_keys = attachments.get("media_keys")
+    if not isinstance(media_keys, list):
+        return []
+    wanted = {key for key in media_keys if isinstance(key, str)}
+    if not wanted:
+        return []
+    return [
+        item
+        for item in media
+        if isinstance(item, dict) and isinstance(item.get("media_key"), str) and item["media_key"] in wanted
+    ]
+
+
+def x_tweet_payload(tweet: dict[str, Any], includes: dict[str, Any]) -> dict[str, Any]:
+    users = includes.get("users", []) if isinstance(includes.get("users"), list) else []
+    media = includes.get("media", []) if isinstance(includes.get("media"), list) else []
+    author = next(
+        (item for item in users if isinstance(item, dict) and item.get("id") == tweet.get("author_id")),
+        None,
+    )
+    username = author.get("username") if isinstance(author, dict) and isinstance(author.get("username"), str) else None
+    tweet_id = tweet.get("id")
+    url = f"https://x.com/{username}/status/{tweet_id}" if username and tweet_id else f"https://x.com/i/web/status/{tweet_id}"
+
+    return {
+        "id": tweet_id,
+        "text": tweet.get("text"),
+        "author": author if isinstance(author, dict) else None,
+        "url": url,
+        "created_at": tweet.get("created_at"),
+        "public_metrics": tweet.get("public_metrics", {}),
+        "media_urls": extract_x_media_urls(x_media_for_tweet(tweet, media)),
+    }
 
 
 async def fetch_x_tweet(access_token: str, tweet_id: str) -> dict[str, Any]:
@@ -1482,23 +1652,85 @@ async def fetch_x_tweet(access_token: str, tweet_id: str) -> dict[str, Any]:
         raise CapabilityError("x_tweet_missing_data")
 
     includes = payload.get("includes") if isinstance(payload.get("includes"), dict) else {}
-    users = includes.get("users", []) if isinstance(includes, dict) else []
-    media = includes.get("media", []) if isinstance(includes, dict) else []
+    users = includes.get("users", []) if isinstance(includes.get("users"), list) else []
     author = next((item for item in users if isinstance(item, dict) and item.get("id") == data.get("author_id")), None)
     if not isinstance(author, dict) or author.get("protected") is not False:
         raise CapabilityError("x_tweet_public_status_unverified")
-    username = author.get("username") if isinstance(author, dict) and isinstance(author.get("username"), str) else None
-    url = f"https://x.com/{username}/status/{tweet_id}" if username else f"https://x.com/i/web/status/{tweet_id}"
+    return {"ok": True, **x_tweet_payload(data, includes)}
+
+
+async def fetch_x_bookmarks(
+    access_token: str,
+    user_id: str,
+    *,
+    page_size: int,
+    pagination_token: str | None,
+) -> dict[str, Any]:
+    params = {
+        "max_results": str(page_size),
+        "tweet.fields": "attachments,author_id,created_at,entities,public_metrics,referenced_tweets",
+        "expansions": "author_id,attachments.media_keys",
+        "user.fields": "id,name,protected,username",
+        "media.fields": "alt_text,media_key,preview_image_url,public_metrics,type,url,variants,width,height",
+    }
+    if pagination_token is not None:
+        params["pagination_token"] = pagination_token
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            f"https://api.x.com/2/users/{user_id}/bookmarks",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params,
+        )
+
+    if response.status_code != 200:
+        raise CapabilityError("x_bookmarks_request_failed", **sanitized_api_error(response))
+
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as error:
+        raise CapabilityError("x_bookmarks_invalid_json") from error
+
+    data = payload.get("data")
+    tweets = data if isinstance(data, list) else []
+    includes = payload.get("includes") if isinstance(payload.get("includes"), dict) else {}
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    next_token = meta.get("next_token")
 
     return {
         "ok": True,
-        "id": data.get("id"),
-        "text": data.get("text"),
-        "author": author,
-        "url": url,
-        "created_at": data.get("created_at"),
-        "public_metrics": data.get("public_metrics", {}),
-        "media_urls": extract_x_media_urls(media if isinstance(media, list) else []),
+        "endpoint": "x.bookmarks.list",
+        "page_size": page_size,
+        "result_count": meta.get("result_count", len(tweets)),
+        "next_token": next_token if isinstance(next_token, str) and next_token else None,
+        "tweets": [x_tweet_payload(tweet, includes) for tweet in tweets if isinstance(tweet, dict)],
+    }
+
+
+async def delete_x_bookmark(access_token: str, user_id: str, tweet_id: str) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.delete(
+            f"https://api.x.com/2/users/{user_id}/bookmarks/{tweet_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if response.status_code not in {200, 204}:
+        raise CapabilityError("x_unbookmark_request_failed", tweet_id=tweet_id, **sanitized_api_error(response))
+
+    if response.status_code == 204 or not response.content:
+        return {"ok": True, "tweet_id": tweet_id, "bookmarked": False}
+
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as error:
+        raise CapabilityError("x_unbookmark_invalid_json", tweet_id=tweet_id) from error
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    bookmarked = data.get("bookmarked") if isinstance(data, dict) else None
+    return {
+        "ok": True,
+        "tweet_id": tweet_id,
+        "bookmarked": bookmarked if isinstance(bookmarked, bool) else False,
     }
 
 
@@ -2494,6 +2726,132 @@ def build_mcp() -> FastMCP:
             return capability_error_payload(error)
         except httpx.HTTPError as error:
             emit_event("capability_error", tool="x.get_tweet", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="x.list_bookmarks")
+    async def x_list_bookmarks(
+        ctx: Context,
+        page_size: int | None = None,
+        pagination_token: str | None = None,
+    ) -> dict[str, Any]:
+        """List Tim's current X bookmarks through server-side OAuth, paginated for Brain ingest."""
+        emit_event("mcp_tool_call", tool="x.list_bookmarks", client_id="heisenberg-access-mcp-env-token")
+        try:
+            effective_page_size = normalize_page_size(
+                page_size,
+                default=X_BOOKMARK_DEFAULT_PAGE_SIZE,
+                minimum=1,
+                maximum=X_BOOKMARK_MAX_PAGE_SIZE,
+            )
+            effective_pagination_token = normalize_x_pagination_token(pagination_token)
+
+            oauth = await openbao.read("x_oauth")
+            if expires_soon(oauth.get("expires_at")):
+                oauth = await refresh_x_access_token(openbao, oauth)
+            oauth, user_id = await ensure_x_user_id(openbao, oauth)
+
+            try:
+                return await fetch_x_bookmarks(
+                    required_secret_value(oauth, "access_token"),
+                    user_id,
+                    page_size=effective_page_size,
+                    pagination_token=effective_pagination_token,
+                )
+            except CapabilityError as error:
+                if error.code != "x_bookmarks_request_failed" or error.details.get("http_status") != 401:
+                    raise
+                oauth = await refresh_x_access_token(openbao, oauth)
+                oauth, user_id = await ensure_x_user_id(openbao, oauth)
+                return await fetch_x_bookmarks(
+                    required_secret_value(oauth, "access_token"),
+                    user_id,
+                    page_size=effective_page_size,
+                    pagination_token=effective_pagination_token,
+                )
+        except OpenBaoError as error:
+            emit_event("capability_error", tool="x.list_bookmarks", error=error.code, openbao_status=error.status_code)
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="x.list_bookmarks", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="x.list_bookmarks", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="x.unbookmark_tweets")
+    async def x_unbookmark_tweets(
+        ctx: Context,
+        tweet_ids_or_urls: list[str],
+        confirm: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Remove X bookmarks after successful ingest; requires confirm=true unless dry_run=true."""
+        emit_event("mcp_tool_call", tool="x.unbookmark_tweets", client_id="heisenberg-access-mcp-env-token")
+        try:
+            tweet_ids = normalize_x_tweet_ids(tweet_ids_or_urls)
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "method": "DELETE",
+                    "endpoint": "x.bookmarks.delete",
+                    "tweet_ids": tweet_ids,
+                    "count": len(tweet_ids),
+                    "requires_confirm": True,
+                }
+
+            ensure_write_confirmed("DELETE", confirm)
+            oauth = await openbao.read("x_oauth")
+            if expires_soon(oauth.get("expires_at")):
+                oauth = await refresh_x_access_token(openbao, oauth)
+            oauth, user_id = await ensure_x_user_id(openbao, oauth)
+            access_token = required_secret_value(oauth, "access_token")
+
+            results: list[dict[str, Any]] = []
+            refreshed_after_401 = False
+            for tweet_id in tweet_ids:
+                try:
+                    results.append(await delete_x_bookmark(access_token, user_id, tweet_id))
+                except CapabilityError as error:
+                    if (
+                        error.code == "x_unbookmark_request_failed"
+                        and error.details.get("http_status") == 401
+                        and not refreshed_after_401
+                    ):
+                        oauth = await refresh_x_access_token(openbao, oauth)
+                        oauth, user_id = await ensure_x_user_id(openbao, oauth)
+                        access_token = required_secret_value(oauth, "access_token")
+                        refreshed_after_401 = True
+                        try:
+                            results.append(await delete_x_bookmark(access_token, user_id, tweet_id))
+                            continue
+                        except CapabilityError as retry_error:
+                            error = retry_error
+                    payload = capability_error_payload(error)
+                    payload["tweet_id"] = tweet_id
+                    results.append(payload)
+
+            deleted_count = sum(1 for result in results if result.get("ok") is True and result.get("bookmarked") is False)
+            return {
+                "ok": all(result.get("ok") is True for result in results),
+                "endpoint": "x.bookmarks.delete",
+                "count": len(tweet_ids),
+                "deleted_count": deleted_count,
+                "results": results,
+            }
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="x.unbookmark_tweets",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="x.unbookmark_tweets", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="x.unbookmark_tweets", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
     @mcp.tool(name="google_health.access_status")
