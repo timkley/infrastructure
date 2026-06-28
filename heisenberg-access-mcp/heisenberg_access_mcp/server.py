@@ -942,6 +942,14 @@ def safe_response_headers(response: httpx.Response) -> dict[str, str]:
     return safe_response_headers_from_headers(response.headers)
 
 
+def headers_for_decoded_response(source_headers: httpx.Headers) -> httpx.Headers:
+    headers = httpx.Headers(source_headers)
+    for header in ("content-encoding", "content-length"):
+        if header in headers:
+            del headers[header]
+    return headers
+
+
 def normalize_service_method(method: str) -> str:
     normalized = method.upper().strip()
     if normalized not in SERVICE_METHODS:
@@ -1238,7 +1246,7 @@ async def limited_service_response(
 
         buffered = httpx.Response(
             response.status_code,
-            headers=response.headers,
+            headers=headers_for_decoded_response(response.headers),
             content=b"".join(chunks),
             request=response.request,
         )
