@@ -2,7 +2,7 @@
 #
 # backup.sh — Back up Docker service data to Hetzner Storage Box via restic
 #
-# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao
+# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, minecraft, openbao
 # Run manually:  ./backup.sh
 # Run one service: ./backup.sh paperless
 #
@@ -183,6 +183,84 @@ backup_immich() {
     log "immich: done"
 }
 
+backup_minecraft() {
+    local dir="$INFRA_DIR/minecraft"
+    local staging_data="$dir/restic-staging/data"
+    local saves_paused=false
+    local sync_failed=false
+    local save_on_failed=false
+    local backup_failed=false
+    log "minecraft: starting backup"
+
+    if [[ ! -d "$dir/data" ]]; then
+        log_error "minecraft: data directory missing at $dir/data"
+        return
+    fi
+
+    if ! command -v rsync >/dev/null; then
+        log_error "minecraft: rsync missing; cannot create restic staging copy"
+        return
+    fi
+
+    if container_running "$dir" mc; then
+        log "minecraft: pausing saves and flushing world data"
+        if ! compose "$dir" exec -T mc rcon-cli save-off >/dev/null; then
+            log_error "minecraft: failed to disable saves via RCON; refusing inconsistent backup"
+            return
+        fi
+        saves_paused=true
+
+        if ! compose "$dir" exec -T mc rcon-cli save-all flush >/dev/null; then
+            log_error "minecraft: save-all flush failed; refusing incomplete backup"
+            compose "$dir" exec -T mc rcon-cli save-on >/dev/null \
+                || log_error "minecraft: failed to re-enable saves after flush failure"
+            return
+        fi
+
+        sync
+    else
+        log "minecraft: mc container not running, backing up files directly"
+    fi
+
+    install -d "$staging_data"
+
+    # Mirror itzg/mc-backup's default tar excludes, but keep an uncompressed
+    # local staging copy so saves can be re-enabled before the remote upload.
+    if ! rsync -a --delete --delete-excluded \
+        --exclude "*.jar" \
+        --exclude "cache" \
+        --exclude "logs" \
+        --exclude "*.tmp" \
+        "$dir/data/" \
+        "$staging_data/"; then
+        sync_failed=true
+        log_error "minecraft: rsync to restic staging failed"
+    fi
+
+    if [[ "$saves_paused" == true ]]; then
+        log "minecraft: re-enabling saves"
+        if ! compose "$dir" exec -T mc rcon-cli save-on >/dev/null; then
+            save_on_failed=true
+            log_error "minecraft: failed to re-enable saves after staging"
+        fi
+    fi
+
+    if [[ "$sync_failed" == true || "$save_on_failed" == true ]]; then
+        return
+    fi
+
+    if ! restic backup --tag minecraft "$staging_data"; then
+        backup_failed=true
+        log_error "minecraft: restic backup failed"
+    fi
+
+    if [[ "$backup_failed" == true ]]; then
+        return
+    fi
+
+    log "minecraft: done"
+}
+
 backup_openbao() {
     local dir="$INFRA_DIR/openbao"
     local env_file="$dir/backup.env"
@@ -264,7 +342,7 @@ apply_retention() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich openbao)
+ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich minecraft openbao)
 
 main() {
     acquire_lock
@@ -283,6 +361,7 @@ main() {
             traefik)   backup_traefik   ;;
             couchdb)   backup_couchdb   ;;
             immich)    backup_immich    ;;
+            minecraft) backup_minecraft ;;
             openbao)   backup_openbao   ;;
             *) log_error "Unknown service: $svc" ;;
         esac

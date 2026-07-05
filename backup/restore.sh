@@ -22,7 +22,7 @@ usage() {
     echo "  $0 snapshots [service]           List available snapshots"
     echo "  $0 restore <service> [snapshot]  Restore to temp directory"
     echo ""
-    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao"
+    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, minecraft, openbao"
     exit 1
 }
 
@@ -126,6 +126,23 @@ EOF
        | docker exec -i immich-db psql --dbname="${DB_DATABASE_NAME:-immich}" --username="${DB_USERNAME:-postgres}" --single-transaction --set ON_ERROR_STOP=on
   7. docker compose --project-directory $INFRA_DIR/immich up -d
   8. Verify, then: rm -rf $INFRA_DIR/immich/library.old $INFRA_DIR/immich/postgres.old
+EOF
+            ;;
+        minecraft)
+            cat <<'EOF'
+  1. docker compose --project-directory $INFRA_DIR/minecraft down
+  2. Move current Minecraft data aside:
+       mv $INFRA_DIR/minecraft/data{,.old}
+  3. Copy restored data:
+       cp -a $RESTORE_DIR/$INFRA_DIR/minecraft/restic-staging/data \
+         $INFRA_DIR/minecraft/
+  4. docker compose --project-directory $INFRA_DIR/minecraft up -d
+  5. Verify the selected WORLD from $INFRA_DIR/minecraft/.env starts correctly.
+  6. Verify, then: rm -rf $INFRA_DIR/minecraft/data.old
+
+  Restic stores an uncompressed staging copy of the live data tree. The local
+  mc-backup archives under $INFRA_DIR/minecraft/backups are intentionally not
+  restored from this snapshot.
 EOF
             ;;
         openbao)
