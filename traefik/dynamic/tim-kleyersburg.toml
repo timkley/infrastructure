@@ -1,0 +1,10 @@
+[http.routers.tim-kleyersburg]
+  rule = "Host(`tim-kleyersburg.de`) || Host(`www.tim-kleyersburg.de`)"
+  entrypoints = ["websecure"]
+  service = "tim-kleyersburg"
+  [http.routers.tim-kleyersburg.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.tim-kleyersburg.loadBalancer]
+  [[http.services.tim-kleyersburg.loadBalancer.servers]]
+    url = "http://host.docker.internal:8008"

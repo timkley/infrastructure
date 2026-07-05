@@ -1,0 +1,10 @@
+[http.routers.tim-und-paula]
+  rule = "Host(`tim-und-paula.love`)"
+  entrypoints = ["websecure"]
+  service = "tim-und-paula"
+  [http.routers.tim-und-paula.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.tim-und-paula.loadBalancer]
+  [[http.services.tim-und-paula.loadBalancer.servers]]
+    url = "http://host.docker.internal:8006"

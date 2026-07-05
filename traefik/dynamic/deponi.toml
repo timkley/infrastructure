@@ -1,0 +1,10 @@
+[http.routers.deponi]
+  rule = "Host(`deponi.timkley.dev`)"
+  entrypoints = ["websecure"]
+  service = "deponi"
+  [http.routers.deponi.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.deponi.loadBalancer]
+  [[http.services.deponi.loadBalancer.servers]]
+    url = "http://host.docker.internal:8007"
