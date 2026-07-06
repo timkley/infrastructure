@@ -25,6 +25,9 @@ services:
       PAPERLESS_REDIS: redis://broker:6379
       PAPERLESS_TASK_WORKERS: "1"
       PAPERLESS_THREADS_PER_WORKER: "1"
+      PAPERLESS_WEBSERVER_WORKERS: "1"
+      PAPERLESS_ENABLE_NLTK: "false"
+      PAPERLESS_OCR_CLEAN: "none"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
