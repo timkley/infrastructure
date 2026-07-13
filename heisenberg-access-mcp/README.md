@@ -10,13 +10,16 @@ The MCP exposes status tools plus narrow service capabilities:
 - `x.list_bookmarks(page_size?, pagination_token?)` reads Tim's current X bookmarks through server-side X OAuth, with pagination and tweet/media/author context for Brain ingest.
 - `x.unbookmark_tweets(tweet_ids_or_urls, confirm?, dry_run?)` removes one or more X bookmarks after successful ingest. It is a mutating X write and requires `confirm=true`; use `dry_run=true` to inspect the target IDs without writing.
 - `google_health.access_status` refreshes a Google access token server-side and calls the harmless Google Health API v4 `users/me/identity` endpoint to report access/scope status without returning health datapoints.
-- `google_health.list_data_types` documents the Google Health API v4 fitness, activity, workout, sleep, health metrics, route/location, TCX, and required readonly OAuth scopes exposed by the explicit tool allowlists.
+- `google_health.list_data_types` documents the Google Health API v4 fitness, activity, workout, sleep, health metrics, nutrition, route/location, TCX, and required OAuth scopes exposed by the explicit tool allowlists.
 - `google_health.get_activity_data_points(...)` reads paginated allowlisted activity datapoints such as steps, distance, calories, active minutes, heart-rate zones, heart rate, altitude, VO2, and exercise/workout sessions.
 - `google_health.get_exercise_data_points(...)` reads paginated Google Health exercise/workout datapoints for a civil date range, with `page_size` capped at 25.
 - `google_health.export_exercise_tcx(...)` exports a single workout route/location TCX file as a private runtime artifact; it returns artifact metadata only.
 - `google_health.get_sleep_data_points(...)` and `google_health.summarize_sleep_day(date)` read sleep sessions, sleep summaries, and sleep-stage context through the readonly sleep scope.
 - `google_health.get_health_metric_data_points(...)` and `google_health.summarize_health_day(date)` read allowlisted health metrics such as heart rate, resting HR, HRV, oxygen saturation / SpO2, respiratory rate, weight, body fat, temperature, and blood glucose.
 - `google_health.summarize_activity_day(date)` returns a compact daily log summary for steps, calories, distance, active minutes, heart-rate zones, altitude, floors, VO2, heart rate, and workouts without dumping large raw health responses.
+- `google_health.log_meal(timestamp, meal_type, items, confirm?, dry_run?)` stores one anonymous Google Health nutrition item per explicitly supplied food. The calling agent must provide the local timestamp with UTC offset, Google meal type, amount-bearing display names, and all core macros; the MCP does not estimate them.
+- `google_health.get_nutrition_day(date)` returns individual foods with correction IDs, meal groups, and daily totals. `google_health.get_nutrition_range(start_date, end_date)` returns compact daily and meal totals without raw items.
+- `google_health.correct_nutrition_item(data_point_id, changes, confirm?, dry_run?)` partially corrects one anonymous item by deleting and recreating it with a new ID. `google_health.delete_nutrition_items(data_point_ids, confirm?, dry_run?)` batch-deletes concrete nutrition IDs.
 - `elevenlabs.text_to_speech(...)` creates speech through server-side ElevenLabs credentials after explicit `confirm=true` and stores the audio as a private runtime artifact. The MCP response returns metadata only: `artifact_id`, `mime_type`, `byte_size`, `sha256`, `created_at`, `voice_id`, `model_id`, `output_format`, and private download instructions.
 - `elevenlabs.request(...)` is a service-scoped ElevenLabs request tool for `https://api.elevenlabs.io`. The API key is never returned. Known binary responses are stored as private artifacts, large JSON is redacted before artifact storage, and large text-like responses are refused.
 - `homeassistant.request(...)` is a service-scoped Home Assistant request tool for the `url` configured in OpenBao.
@@ -78,16 +81,18 @@ Brain ingest should switch away from local `~/.config/heisenberg/x-api.json` cre
 
 Do not unbookmark tweets speculatively. Failed or partially ingested tweets should remain bookmarked and be retried later.
 
-## Google Health Fitness, Sleep, and Metrics
+## Google Health Fitness, Sleep, Metrics, and Nutrition
 
-Google Health tools use the server-side OAuth client and refresh token from OpenBao. The intended read-only scope set is:
+Google Health tools use the server-side OAuth client and refresh token from OpenBao. The intended scope set is:
 
 - `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
 - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
 - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
 - `https://www.googleapis.com/auth/googlehealth.location.readonly`
+- `https://www.googleapis.com/auth/googlehealth.nutrition.readonly`
+- `https://www.googleapis.com/auth/googlehealth.nutrition.writeonly`
 
-Optional read-only scopes can be added to the same consent flow when needed: nutrition, ECG, irregular rhythm notification, profile, and settings. The MCP does not expose Google Health write tools.
+Optional read-only scopes can be added to the same consent flow when needed: ECG, irregular rhythm notification, profile, and settings. Nutrition is the only Google Health write capability exposed by this MCP.
 
 When changing Google Health scopes, Tim must perform a new OAuth consent and replace `secret/data/heisenberg/google-health/oauth-token` in OpenBao with the new refresh token plus metadata such as `scope_set`, `source`, and `stored_at`. Existing refresh tokens do not gain newly requested scopes automatically. If a tool returns a sanitized Google `PERMISSION_DENIED` or unsupported-data-type error, check the OpenBao `scope_set` and Google API support for that data type before changing code.
 
@@ -102,6 +107,19 @@ Useful tools:
 - `google_health.get_health_metric_data_points(data_type, start_time?, end_time?, page_size?, page_token?)` reads allowlisted health metrics such as `heart-rate`, `daily-resting-heart-rate`, `daily-heart-rate-variability`, `heart-rate-variability`, `daily-oxygen-saturation`, `oxygen-saturation`, `daily-respiratory-rate`, `respiratory-rate-sleep-summary`, `weight`, `body-fat`, `core-body-temperature`, and `blood-glucose`.
 - `google_health.summarize_health_day(date)` combines daily rollups and compact daily records for recovery and body metrics.
 - `google_health.summarize_activity_day(date)` calls Google Health daily rollups for activity metrics such as `steps`, `distance`, `active-energy-burned`, `active-minutes`, `active-zone-minutes`, `time-in-heart-rate-zone`, `altitude`, `floors`, `run-vo2-max`, `heart-rate`, and `total-calories`, then adds compact exercise/workout summaries for the same date. Use this for Daily Log, Brain, and fitness data sync workflows where a concise one-day summary is better than raw datapoint dumps.
+
+Nutrition tools deliberately use only anonymous `nutrition-log` data points. They do not use the Food or serving-unit catalogs:
+
+- `google_health.log_meal(timestamp, meal_type, items, confirm?, dry_run?)` requires an RFC3339 timestamp with an explicit offset and one of Google's meal types: `BEFORE_BREAKFAST`, `BREAKFAST`, `BEFORE_LUNCH`, `LUNCH`, `BEFORE_DINNER`, `DINNER`, `AFTER_DINNER`, `SNACK`, or legacy `ANYTIME`. Each call accepts at most 100 items. Each item requires `display_name`, `energy_kcal`, `protein_g`, `carbohydrate_g`, and `fat_g`. Put the consumed amount directly in `display_name`, for example `Skyr, 250 g`. Optional `energy_from_fat_kcal` and `additional_nutrients_g` values map to native Google NutritionLog fields. There is no duplicate detection. Completed create operations report Google's actual `data_point_id`; an accepted but pending operation exposes only the requested ID until a read returns the Google-assigned ID.
+- The calling agent must resolve the timestamp and meal type and estimate missing core values before it calls `log_meal`. The MCP never estimates or silently fills nutrition data. An explicit instruction such as “logge …” authorizes the write when `confirm=true`; an incidental food mention outside an active tracking context does not.
+- `google_health.get_nutrition_day(date)` returns foods with `data_point_id`, meal groups keyed by exact `datetime + meal_type`, and day totals. Use those concrete IDs for corrections and deletion.
+- `google_health.get_nutrition_range(start_date, end_date)` treats both dates as inclusive, accepts at most 90 days, and returns every requested civil day with compact meal/day totals. It intentionally omits raw food items and correction IDs.
+- `google_health.correct_nutrition_item(data_point_id, changes, confirm?, dry_run?)` accepts partial changes, reads the existing anonymous item, deletes it, and creates a replacement under a new ID. It rejects catalog-backed identified foods instead of silently converting them. Google documents anonymous logs as non-editable. The two write operations are not a transaction and V1 does not roll back if recreation fails.
+- `google_health.delete_nutrition_items(data_point_ids, confirm?, dry_run?)` sends Google's documented `names[]` batch-delete request for at most 10,000 concrete nutrition-log IDs.
+
+Google create and batch-delete calls return `Operation` resources. V1 returns a sanitized accepted/pending/error summary and extracts the actual Google data point ID from completed create responses, but deliberately does not poll operations. Multi-item writes report every accepted and failed item and do not simulate a transaction.
+
+Two documented API ambiguities remain explicit live-smoke checks: Google's prose permits anonymous logs using `foodDisplayName` plus manual nutrition values while the field table simultaneously marks `food` required; and V1 represents a meal timestamp with equal session `startTime` and `endTime`. Unit tests lock the intended payload shape, but only the post-consent live smoke test can prove that Google accepts it.
 
 Large raw health responses are intentionally avoided. Raw reads are paginated, session reads cap `page_size` at 25, broader sample reads cap `page_size` at 100, daily summaries query one day at a time, and TCX exports become private artifacts. Verification reports should include only status, counts, keys, endpoints, and time windows rather than full health datapoints, tokens, identities, or health values.
 
@@ -211,6 +229,11 @@ Tools should stay explicit capabilities such as:
 - `google_health.summarize_sleep_day`
 - `google_health.get_health_metric_data_points`
 - `google_health.summarize_health_day`
+- `google_health.log_meal`
+- `google_health.get_nutrition_day`
+- `google_health.get_nutrition_range`
+- `google_health.correct_nutrition_item`
+- `google_health.delete_nutrition_items`
 - `elevenlabs.text_to_speech`
 - `elevenlabs.request`, `homeassistant.request`, `freshrss.request`, and `tandoor.request` scoped to fixed service base URLs
 

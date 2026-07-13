@@ -5,12 +5,13 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -85,6 +86,11 @@ ELEVENLABS_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 GOOGLE_HEALTH_CIVIL_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?$")
 GOOGLE_HEALTH_EXERCISE_DATA_POINT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+GOOGLE_HEALTH_NUTRITION_DATA_POINT_ID_RE = re.compile(r"^[a-z0-9-]{4,63}$")
+GOOGLE_HEALTH_RFC3339_OFFSET_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$"
+)
+GOOGLE_PROTOBUF_DURATION_RE = re.compile(r"^-?\d+(?:\.\d{1,9})?s$")
 TOKEN_REFRESH_SKEW = timedelta(minutes=5)
 X_BOOKMARK_DEFAULT_PAGE_SIZE = 25
 X_BOOKMARK_MAX_PAGE_SIZE = 100
@@ -93,19 +99,80 @@ GOOGLE_HEALTH_ACTIVITY_SCOPE = "https://www.googleapis.com/auth/googlehealth.act
 GOOGLE_HEALTH_SLEEP_SCOPE = "https://www.googleapis.com/auth/googlehealth.sleep.readonly"
 GOOGLE_HEALTH_HEALTH_METRICS_SCOPE = "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly"
 GOOGLE_HEALTH_LOCATION_SCOPE = "https://www.googleapis.com/auth/googlehealth.location.readonly"
+GOOGLE_HEALTH_NUTRITION_READ_SCOPE = "https://www.googleapis.com/auth/googlehealth.nutrition.readonly"
+GOOGLE_HEALTH_NUTRITION_WRITE_SCOPE = "https://www.googleapis.com/auth/googlehealth.nutrition.writeonly"
 GOOGLE_HEALTH_REQUIRED_READONLY_SCOPES = (
     GOOGLE_HEALTH_ACTIVITY_SCOPE,
     GOOGLE_HEALTH_SLEEP_SCOPE,
     GOOGLE_HEALTH_HEALTH_METRICS_SCOPE,
     GOOGLE_HEALTH_LOCATION_SCOPE,
+    GOOGLE_HEALTH_NUTRITION_READ_SCOPE,
 )
 GOOGLE_HEALTH_OPTIONAL_READONLY_SCOPES = (
-    "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
     "https://www.googleapis.com/auth/googlehealth.ecg.readonly",
     "https://www.googleapis.com/auth/googlehealth.irn.readonly",
     "https://www.googleapis.com/auth/googlehealth.profile.readonly",
     "https://www.googleapis.com/auth/googlehealth.settings.readonly",
 )
+GOOGLE_HEALTH_NUTRITION_SCOPES = (
+    GOOGLE_HEALTH_NUTRITION_READ_SCOPE,
+    GOOGLE_HEALTH_NUTRITION_WRITE_SCOPE,
+)
+GOOGLE_HEALTH_MEAL_TYPES = {
+    "AFTER_DINNER",
+    "ANYTIME",
+    "BEFORE_BREAKFAST",
+    "BEFORE_DINNER",
+    "BEFORE_LUNCH",
+    "BREAKFAST",
+    "DINNER",
+    "LUNCH",
+    "SNACK",
+}
+GOOGLE_HEALTH_NUTRIENTS = {
+    "BIOTIN",
+    "CAFFEINE",
+    "CALCIUM",
+    "CARBOHYDRATES",
+    "CHLORIDE",
+    "CHOLESTEROL",
+    "CHROMIUM",
+    "COPPER",
+    "DIETARY_FIBER",
+    "FOLATE",
+    "FOLIC_ACID",
+    "IODINE",
+    "IRON",
+    "MAGNESIUM",
+    "MANGANESE",
+    "MOLYBDENUM",
+    "MONOUNSATURATED_FAT",
+    "NIACIN",
+    "PANTOTHENIC_ACID",
+    "PHOSPHORUS",
+    "POLYUNSATURATED_FAT",
+    "POTASSIUM",
+    "PROTEIN",
+    "RIBOFLAVIN",
+    "SATURATED_FAT",
+    "SELENIUM",
+    "SODIUM",
+    "SUGAR",
+    "THIAMIN",
+    "TRANS_FAT",
+    "UNSATURATED_FAT",
+    "VITAMIN_A",
+    "VITAMIN_B12",
+    "VITAMIN_B6",
+    "VITAMIN_C",
+    "VITAMIN_D",
+    "VITAMIN_E",
+    "VITAMIN_K",
+    "ZINC",
+}
+GOOGLE_HEALTH_NUTRITION_MAX_ITEMS_PER_MEAL = 100
+GOOGLE_HEALTH_NUTRITION_MAX_DELETE_ITEMS = 10_000
+GOOGLE_HEALTH_NUTRITION_MAX_RANGE_DAYS = 90
 # Google Health path names stay hyphenated, but list filters for hyphenated
 # data types are accepted with snake_case prefixes in live API probes.
 GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES = {
@@ -536,7 +603,7 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "tool": "google_health.list_data_types",
         "enabled": True,
         "secret_access": False,
-        "scope": "documents Google Health fitness data, exercise, workout, activity, sleep, health metrics, heart rate, HRV, recovery, oxygen saturation, respiratory rate, weight, body fat, route, location, TCX, and required readonly OAuth scopes",
+        "scope": "documents Google Health fitness data, exercise, workout, activity, sleep, health metrics, nutrition, route, location, TCX, and required OAuth scopes",
     },
     "google_health.get_activity_data_points": {
         "tool": "google_health.get_activity_data_points",
@@ -593,6 +660,41 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "secret_access": "server-side OpenBao OAuth client and refresh token",
         "scope": "read-only daily health metrics summary for heart rate, resting HR, HRV, recovery, oxygen saturation/SpO2, respiratory rate, weight, body fat, temperature, and other allowlisted health datapoints",
         "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
+    "google_health.log_meal": {
+        "tool": "google_health.log_meal",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "create anonymous Google Health nutrition-log data points after the calling agent supplies timestamp, meal type, food amounts, and complete core macros",
+        "writes": "creates one nutrition-log data point per food only with confirm=true; supports dry_run",
+    },
+    "google_health.get_nutrition_day": {
+        "tool": "google_health.get_nutrition_day",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read one civil day of nutrition-log items, meal groups, totals, and correction IDs",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
+    "google_health.get_nutrition_range": {
+        "tool": "google_health.get_nutrition_range",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "read compact daily and meal nutrition totals for an inclusive civil date range",
+        "writes": "updates token metadata only if Google returns replacement token metadata",
+    },
+    "google_health.correct_nutrition_item": {
+        "tool": "google_health.correct_nutrition_item",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "partially correct one anonymous nutrition item by concrete Google data point ID",
+        "writes": "reads the existing item, then deletes and recreates it with a new ID only with confirm=true; supports dry_run and has no rollback",
+    },
+    "google_health.delete_nutrition_items": {
+        "tool": "google_health.delete_nutrition_items",
+        "enabled": True,
+        "secret_access": "server-side OpenBao OAuth client and refresh token",
+        "scope": "delete one or more nutrition-log items by concrete Google data point IDs",
+        "writes": "batch-deletes only named nutrition-log data points with confirm=true; supports dry_run",
     },
     "elevenlabs.request": {
         "tool": "elevenlabs.request",
@@ -2079,14 +2181,483 @@ def summarize_google_health_sleep(data_point: Any) -> dict[str, Any]:
     )
 
 
+def normalize_google_health_nutrition_timestamp(value: Any) -> tuple[str, str]:
+    if not isinstance(value, str) or not GOOGLE_HEALTH_RFC3339_OFFSET_RE.fullmatch(value.strip()):
+        raise CapabilityError(
+            "nutrition_timestamp_must_be_rfc3339_with_offset",
+            expected_format="YYYY-MM-DDTHH:MM:SS+HH:MM (Z is also accepted)",
+        )
+    timestamp = value.strip()
+    try:
+        parsed = datetime.fromisoformat(timestamp.removesuffix("Z") + ("+00:00" if timestamp.endswith("Z") else ""))
+    except ValueError as error:
+        raise CapabilityError(
+            "nutrition_timestamp_invalid",
+            expected_format="YYYY-MM-DDTHH:MM:SS+HH:MM",
+        ) from error
+    utc_offset = parsed.utcoffset()
+    if utc_offset is None:
+        raise CapabilityError("nutrition_timestamp_offset_required")
+    offset_seconds = int(utc_offset.total_seconds())
+    return timestamp, f"{offset_seconds}s"
+
+
+def normalize_google_health_nutrition_number(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CapabilityError(f"{name}_must_be_number")
+    normalized = float(value)
+    if not math.isfinite(normalized) or normalized < 0:
+        raise CapabilityError(f"{name}_must_be_non_negative_finite_number")
+    return normalized
+
+
+def normalize_google_health_meal_type(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CapabilityError("meal_type_required", allowed=sorted(GOOGLE_HEALTH_MEAL_TYPES))
+    normalized = value.strip().upper()
+    if normalized not in GOOGLE_HEALTH_MEAL_TYPES:
+        raise CapabilityError("meal_type_not_allowed", allowed=sorted(GOOGLE_HEALTH_MEAL_TYPES))
+    return normalized
+
+
+def normalize_google_health_additional_nutrients(value: Any, *, name: str = "additional_nutrients_g") -> dict[str, float]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise CapabilityError(f"{name}_must_be_object")
+
+    nutrients: dict[str, float] = {}
+    for raw_nutrient, raw_quantity in value.items():
+        if not isinstance(raw_nutrient, str) or not raw_nutrient.strip():
+            raise CapabilityError(f"{name}_key_must_be_nutrient_enum")
+        nutrient = raw_nutrient.strip().upper()
+        if nutrient not in GOOGLE_HEALTH_NUTRIENTS:
+            raise CapabilityError(f"{name}_nutrient_not_allowed", nutrient=nutrient, allowed=sorted(GOOGLE_HEALTH_NUTRIENTS))
+        if nutrient in {"PROTEIN", "CARBOHYDRATES"}:
+            raise CapabilityError(
+                f"{name}_duplicates_core_macro",
+                nutrient=nutrient,
+                message="Use protein_g or carbohydrate_g for core macros.",
+            )
+        if nutrient in nutrients:
+            raise CapabilityError(f"{name}_contains_duplicate_nutrient", nutrient=nutrient)
+        nutrients[nutrient] = normalize_google_health_nutrition_number(
+            raw_quantity,
+            f"{name}_{nutrient.lower()}",
+        )
+    return nutrients
+
+
+def normalize_google_health_nutrition_item(value: Any, *, index: int | None = None) -> dict[str, Any]:
+    location = f"items_{index}" if index is not None else "item"
+    if not isinstance(value, dict):
+        raise CapabilityError(f"{location}_must_be_object")
+
+    allowed_fields = {
+        "display_name",
+        "energy_kcal",
+        "protein_g",
+        "carbohydrate_g",
+        "fat_g",
+        "energy_from_fat_kcal",
+        "additional_nutrients_g",
+    }
+    unsupported = sorted(set(value) - allowed_fields)
+    if unsupported:
+        raise CapabilityError(f"{location}_contains_unsupported_fields", fields=unsupported)
+
+    required_fields = {"display_name", "energy_kcal", "protein_g", "carbohydrate_g", "fat_g"}
+    missing = sorted(field for field in required_fields if field not in value)
+    if missing:
+        raise CapabilityError(f"{location}_missing_required_fields", fields=missing)
+
+    display_name = value.get("display_name")
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise CapabilityError(f"{location}_display_name_required")
+    display_name = display_name.strip()
+    if len(display_name) > 1000:
+        raise CapabilityError(f"{location}_display_name_too_long", maximum=1000)
+
+    item: dict[str, Any] = {
+        "display_name": display_name,
+        "energy_kcal": normalize_google_health_nutrition_number(value.get("energy_kcal"), f"{location}_energy_kcal"),
+        "protein_g": normalize_google_health_nutrition_number(value.get("protein_g"), f"{location}_protein_g"),
+        "carbohydrate_g": normalize_google_health_nutrition_number(
+            value.get("carbohydrate_g"),
+            f"{location}_carbohydrate_g",
+        ),
+        "fat_g": normalize_google_health_nutrition_number(value.get("fat_g"), f"{location}_fat_g"),
+        "additional_nutrients_g": normalize_google_health_additional_nutrients(
+            value.get("additional_nutrients_g"),
+            name=f"{location}_additional_nutrients_g",
+        ),
+    }
+    if "energy_from_fat_kcal" in value:
+        item["energy_from_fat_kcal"] = normalize_google_health_nutrition_number(
+            value.get("energy_from_fat_kcal"),
+            f"{location}_energy_from_fat_kcal",
+        )
+    return item
+
+
+def normalize_google_health_meal(timestamp: Any, meal_type: Any, items: Any) -> dict[str, Any]:
+    normalized_timestamp, utc_offset = normalize_google_health_nutrition_timestamp(timestamp)
+    normalized_meal_type = normalize_google_health_meal_type(meal_type)
+    if not isinstance(items, list):
+        raise CapabilityError("items_must_be_list")
+    if not items:
+        raise CapabilityError("items_required")
+    if len(items) > GOOGLE_HEALTH_NUTRITION_MAX_ITEMS_PER_MEAL:
+        raise CapabilityError(
+            "too_many_nutrition_items",
+            maximum=GOOGLE_HEALTH_NUTRITION_MAX_ITEMS_PER_MEAL,
+            provided=len(items),
+        )
+    return {
+        "timestamp": normalized_timestamp,
+        "utc_offset": utc_offset,
+        "meal_type": normalized_meal_type,
+        "items": [normalize_google_health_nutrition_item(item, index=index) for index, item in enumerate(items)],
+    }
+
+
+def new_google_health_nutrition_data_point_id() -> str:
+    data_point_id = f"meal-{secrets.token_hex(16)}"
+    if not GOOGLE_HEALTH_NUTRITION_DATA_POINT_ID_RE.fullmatch(data_point_id):
+        raise RuntimeError("generated Google Health nutrition data point ID is invalid")
+    return data_point_id
+
+
+def google_health_nutrition_data_point_name(data_point_id: str) -> str:
+    return f"users/me/dataTypes/nutrition-log/dataPoints/{data_point_id}"
+
+
+def google_health_nutrition_data_point_id_from_name(resource_name: Any) -> str | None:
+    if not isinstance(resource_name, str):
+        return None
+    parts = resource_name.split("/")
+    if len(parts) != 6:
+        return None
+    if parts[0] != "users" or parts[2] != "dataTypes" or parts[3] != "nutrition-log" or parts[4] != "dataPoints":
+        return None
+    data_point_id = parts[5]
+    return data_point_id if GOOGLE_HEALTH_NUTRITION_DATA_POINT_ID_RE.fullmatch(data_point_id) else None
+
+
+def normalize_google_health_nutrition_data_point_id(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CapabilityError("nutrition_data_point_id_required")
+    normalized = value.strip()
+    if normalized.startswith("users/"):
+        extracted = google_health_nutrition_data_point_id_from_name(normalized)
+        if extracted is not None:
+            return extracted
+    if not GOOGLE_HEALTH_NUTRITION_DATA_POINT_ID_RE.fullmatch(normalized):
+        raise CapabilityError(
+            "nutrition_data_point_id_invalid",
+            expected="4-63 lowercase letters, digits, or hyphens",
+        )
+    return normalized
+
+
+def google_health_weight_quantity(grams: float) -> dict[str, Any]:
+    return {"grams": grams, "userProvidedUnit": "GRAM"}
+
+
+def google_health_energy_quantity(kcal: float) -> dict[str, Any]:
+    return {"kcal": kcal, "userProvidedUnit": "KILOCALORIE"}
+
+
+def build_google_health_nutrition_data_point(
+    *,
+    timestamp: str,
+    utc_offset: str,
+    meal_type: str,
+    item: dict[str, Any],
+    data_point_id: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    effective_id = data_point_id or new_google_health_nutrition_data_point_id()
+    parsed_timestamp = datetime.fromisoformat(
+        timestamp.removesuffix("Z") + ("+00:00" if timestamp.endswith("Z") else "")
+    )
+    interval_end = (parsed_timestamp + timedelta(seconds=1)).isoformat()
+    if timestamp.endswith("Z"):
+        interval_end = interval_end.removesuffix("+00:00") + "Z"
+    nutrients = [
+        {
+            "quantity": google_health_weight_quantity(item["protein_g"]),
+            "nutrient": "PROTEIN",
+        }
+    ]
+    nutrients.extend(
+        {
+            "quantity": google_health_weight_quantity(quantity),
+            "nutrient": nutrient,
+        }
+        for nutrient, quantity in sorted(item.get("additional_nutrients_g", {}).items())
+    )
+    nutrition_log: dict[str, Any] = {
+        "interval": {
+            "startTime": timestamp,
+            "startUtcOffset": utc_offset,
+            "endTime": interval_end,
+            "endUtcOffset": utc_offset,
+        },
+        "nutrients": nutrients,
+        "energy": google_health_energy_quantity(item["energy_kcal"]),
+        "totalCarbohydrate": google_health_weight_quantity(item["carbohydrate_g"]),
+        "totalFat": google_health_weight_quantity(item["fat_g"]),
+        "mealType": meal_type,
+        "foodDisplayName": item["display_name"],
+    }
+    if "energy_from_fat_kcal" in item:
+        nutrition_log["energyFromFat"] = google_health_energy_quantity(item["energy_from_fat_kcal"])
+    return effective_id, {
+        "name": google_health_nutrition_data_point_name(effective_id),
+        "nutritionLog": nutrition_log,
+    }
+
+
+def google_health_operation_summary(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise CapabilityError("google_health_operation_invalid_json_shape")
+    summary: dict[str, Any] = {}
+    if isinstance(payload.get("name"), str):
+        summary["name"] = payload["name"]
+    if isinstance(payload.get("done"), bool):
+        summary["done"] = payload["done"]
+    error = payload.get("error")
+    if isinstance(error, dict):
+        summary["error"] = redacted_json(error)
+    response = payload.get("response")
+    if isinstance(response, dict):
+        data_point_id = google_health_nutrition_data_point_id_from_name(response.get("name"))
+        if data_point_id is not None:
+            summary["data_point_id"] = data_point_id
+    summary["pending"] = not bool(summary.get("done")) and "error" not in summary
+    return summary
+
+
+def google_health_operation_accepted(operation: dict[str, Any]) -> bool:
+    return "error" not in operation
+
+
+def google_health_quantity_value(value: Any, field: str, name: str) -> float:
+    if not isinstance(value, dict):
+        raise CapabilityError(f"{name}_missing")
+    return normalize_google_health_nutrition_number(value.get(field), name)
+
+
+def google_health_quantity_value_or_zero(value: Any, field: str, name: str) -> float:
+    if value is None:
+        return 0.0
+    return google_health_quantity_value(value, field, name)
+
+
+def google_health_offset_seconds(value: Any) -> int:
+    if not isinstance(value, str) or not GOOGLE_PROTOBUF_DURATION_RE.fullmatch(value):
+        raise CapabilityError("nutrition_interval_utc_offset_invalid")
+    seconds = float(value.removesuffix("s"))
+    if not math.isfinite(seconds) or not seconds.is_integer() or abs(seconds) >= 24 * 60 * 60:
+        raise CapabilityError("nutrition_interval_utc_offset_invalid")
+    return int(seconds)
+
+
+def google_health_nutrition_local_timestamp(interval: Any) -> str:
+    if not isinstance(interval, dict):
+        raise CapabilityError("nutrition_interval_missing")
+    start_time = interval.get("startTime")
+    if not isinstance(start_time, str):
+        raise CapabilityError("nutrition_interval_start_time_missing")
+    try:
+        physical_time = datetime.fromisoformat(start_time.removesuffix("Z") + ("+00:00" if start_time.endswith("Z") else ""))
+    except ValueError as error:
+        raise CapabilityError("nutrition_interval_start_time_invalid") from error
+    if physical_time.utcoffset() is None:
+        raise CapabilityError("nutrition_interval_start_time_offset_missing")
+    offset_seconds = google_health_offset_seconds(interval.get("startUtcOffset"))
+    return physical_time.astimezone(timezone(timedelta(seconds=offset_seconds))).isoformat()
+
+
+def google_health_nutrition_item_from_data_point(data_point: Any) -> dict[str, Any]:
+    if not isinstance(data_point, dict):
+        raise CapabilityError("nutrition_data_point_invalid")
+    data_point_id = google_health_nutrition_data_point_id_from_name(data_point.get("name"))
+    if data_point_id is None:
+        raise CapabilityError("nutrition_data_point_missing_valid_id")
+    nutrition_log = data_point.get("nutritionLog")
+    if not isinstance(nutrition_log, dict):
+        raise CapabilityError("nutrition_log_missing")
+    display_name = nutrition_log.get("foodDisplayName")
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise CapabilityError("nutrition_food_display_name_missing", data_point_id=data_point_id)
+
+    protein_g = 0.0
+    additional_nutrients: dict[str, float] = {}
+    raw_nutrients = nutrition_log.get("nutrients", [])
+    if not isinstance(raw_nutrients, list):
+        raise CapabilityError("nutrition_nutrients_invalid", data_point_id=data_point_id)
+    for raw_nutrient in raw_nutrients:
+        if not isinstance(raw_nutrient, dict) or not isinstance(raw_nutrient.get("nutrient"), str):
+            continue
+        nutrient = raw_nutrient["nutrient"]
+        if nutrient not in GOOGLE_HEALTH_NUTRIENTS:
+            continue
+        grams = google_health_quantity_value(
+            raw_nutrient.get("quantity"),
+            "grams",
+            f"nutrition_{nutrient.lower()}_grams",
+        )
+        if nutrient == "PROTEIN":
+            protein_g = grams
+        elif nutrient != "CARBOHYDRATES":
+            additional_nutrients[nutrient] = grams
+    meal_type = normalize_google_health_meal_type(nutrition_log.get("mealType"))
+    item: dict[str, Any] = {
+        "data_point_id": data_point_id,
+        "datetime": google_health_nutrition_local_timestamp(nutrition_log.get("interval")),
+        "meal_type": meal_type,
+        "display_name": display_name.strip(),
+        "energy_kcal": google_health_quantity_value_or_zero(
+            nutrition_log.get("energy"),
+            "kcal",
+            "nutrition_energy_kcal",
+        ),
+        "protein_g": protein_g,
+        "carbohydrate_g": google_health_quantity_value_or_zero(
+            nutrition_log.get("totalCarbohydrate"),
+            "grams",
+            "nutrition_total_carbohydrate_grams",
+        ),
+        "fat_g": google_health_quantity_value_or_zero(
+            nutrition_log.get("totalFat"),
+            "grams",
+            "nutrition_total_fat_grams",
+        ),
+        "additional_nutrients_g": additional_nutrients,
+    }
+    if isinstance(nutrition_log.get("energyFromFat"), dict):
+        item["energy_from_fat_kcal"] = google_health_quantity_value(
+            nutrition_log["energyFromFat"],
+            "kcal",
+            "nutrition_energy_from_fat_kcal",
+        )
+    return item
+
+
+def google_health_nutrition_totals(items: list[dict[str, Any]]) -> dict[str, Any]:
+    totals: dict[str, Any] = {
+        "energy_kcal": 0.0,
+        "protein_g": 0.0,
+        "carbohydrate_g": 0.0,
+        "fat_g": 0.0,
+    }
+    additional: dict[str, float] = {}
+    for item in items:
+        for field in ("energy_kcal", "protein_g", "carbohydrate_g", "fat_g"):
+            totals[field] += float(item[field])
+        for nutrient, quantity in item.get("additional_nutrients_g", {}).items():
+            additional[nutrient] = additional.get(nutrient, 0.0) + float(quantity)
+    for field in ("energy_kcal", "protein_g", "carbohydrate_g", "fat_g"):
+        totals[field] = round(totals[field], 6)
+    totals["additional_nutrients_g"] = {
+        nutrient: round(quantity, 9)
+        for nutrient, quantity in sorted(additional.items())
+    }
+    return totals
+
+
+def google_health_nutrition_meal_groups(
+    items: list[dict[str, Any]],
+    *,
+    expose_data_point_ids: bool,
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault((item["datetime"], item["meal_type"]), []).append(item)
+
+    meals: list[dict[str, Any]] = []
+    for (timestamp, meal_type), meal_items in sorted(grouped.items()):
+        meal: dict[str, Any] = {
+            "datetime": timestamp,
+            "meal_type": meal_type,
+            "item_count": len(meal_items),
+            "totals": google_health_nutrition_totals(meal_items),
+        }
+        if expose_data_point_ids:
+            meal["data_point_ids"] = [item["data_point_id"] for item in meal_items]
+        meals.append(meal)
+    return meals
+
+
+def summarize_google_health_nutrition_day(target_date: date, items: list[dict[str, Any]]) -> dict[str, Any]:
+    sorted_items = sorted(items, key=lambda item: (item["datetime"], item["meal_type"], item["display_name"], item["data_point_id"]))
+    return {
+        "date": target_date.isoformat(),
+        "item_count": len(sorted_items),
+        "meal_count": len({(item["datetime"], item["meal_type"]) for item in sorted_items}),
+        "totals": google_health_nutrition_totals(sorted_items),
+        "meals": google_health_nutrition_meal_groups(sorted_items, expose_data_point_ids=True),
+        "items": sorted_items,
+    }
+
+
+def summarize_google_health_nutrition_range(
+    start_date: date,
+    end_date: date,
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_date: dict[date, list[dict[str, Any]]] = {}
+    for item in items:
+        item_date = datetime.fromisoformat(item["datetime"]).date()
+        if start_date <= item_date <= end_date:
+            by_date.setdefault(item_date, []).append(item)
+
+    days: list[dict[str, Any]] = []
+    current = start_date
+    while current <= end_date:
+        day_items = by_date.get(current, [])
+        days.append(
+            {
+                "date": current.isoformat(),
+                "item_count": len(day_items),
+                "meal_count": len({(item["datetime"], item["meal_type"]) for item in day_items}),
+                "totals": google_health_nutrition_totals(day_items),
+                "meals": google_health_nutrition_meal_groups(day_items, expose_data_point_ids=False),
+            }
+        )
+        current += timedelta(days=1)
+    return days
+
+
+def google_health_nutrition_range_end_exclusive(start_date: date, end_date: date) -> date:
+    if end_date < start_date:
+        raise CapabilityError("end_date_before_start_date")
+    day_count = (end_date - start_date).days + 1
+    if day_count > GOOGLE_HEALTH_NUTRITION_MAX_RANGE_DAYS:
+        raise CapabilityError(
+            "nutrition_date_range_too_large",
+            maximum_days=GOOGLE_HEALTH_NUTRITION_MAX_RANGE_DAYS,
+            provided_days=day_count,
+        )
+    try:
+        return end_date + timedelta(days=1)
+    except OverflowError as error:
+        raise CapabilityError("nutrition_end_date_too_late") from error
+
+
 def google_health_activity_data_types_payload() -> dict[str, Any]:
     return {
         "ok": True,
         "required_readonly_scopes": list(GOOGLE_HEALTH_REQUIRED_READONLY_SCOPES),
+        "required_nutrition_scopes": list(GOOGLE_HEALTH_NUTRITION_SCOPES),
         "optional_readonly_scopes_prepared": list(GOOGLE_HEALTH_OPTIONAL_READONLY_SCOPES),
         "source": {
             "discovery": "https://health.googleapis.com/$discovery/rest?version=v4",
             "data_points_list": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/list",
+            "data_points_create": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/create",
+            "data_points_get": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/get",
+            "data_points_batch_delete": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/batchDelete",
             "daily_rollup": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/dailyRollUp",
             "tcx_export": "https://developers.google.com/health/reference/rest/v4/users.dataTypes.dataPoints/exportExerciseTcx",
         },
@@ -2096,6 +2667,9 @@ def google_health_activity_data_types_payload() -> dict[str, Any]:
             "Path data type names are hyphenated, while list filter prefixes use the documented snake_case field names.",
             "OAuth scope changes require a new user-consented refresh token in OpenBao; tools return sanitized Google API errors if a scope or data type is unavailable.",
             "TCX export is explicit and stores the XML as a private runtime artifact; it requires activity_and_fitness.readonly plus location.readonly.",
+            "Nutrition writes create anonymous food logs with foodDisplayName and caller-supplied nutrient quantities; the MCP never estimates values.",
+            "Anonymous nutrition logs are corrected by deleting and recreating them because Google documents them as non-editable.",
+            "Create and batchDelete return long-running Operation resources. V1 reports the accepted operation without polling it.",
         ],
         "activity_data_points": google_health_data_type_payload(GOOGLE_HEALTH_ACTIVITY_RAW_DATA_TYPES),
         "sleep_data_points": google_health_data_type_payload(GOOGLE_HEALTH_SLEEP_DATA_TYPES),
@@ -2114,6 +2688,24 @@ def google_health_activity_data_types_payload() -> dict[str, Any]:
             "input": "exercise_data_point_id from google_health.get_exercise_data_points or google_health.get_activity_data_points(data_type='exercise')",
             "response": "private artifact metadata only",
         },
+        "nutrition_log": {
+            "data_type": "nutrition-log",
+            "field": "nutritionLog",
+            "required_scopes": list(GOOGLE_HEALTH_NUTRITION_SCOPES),
+            "meal_types": sorted(GOOGLE_HEALTH_MEAL_TYPES),
+            "required_item_fields": [
+                "display_name",
+                "energy_kcal",
+                "protein_g",
+                "carbohydrate_g",
+                "fat_g",
+            ],
+            "optional_item_fields": ["energy_from_fat_kcal", "additional_nutrients_g"],
+            "maximum_items_per_meal": GOOGLE_HEALTH_NUTRITION_MAX_ITEMS_PER_MEAL,
+            "maximum_range_days": GOOGLE_HEALTH_NUTRITION_MAX_RANGE_DAYS,
+            "additional_nutrients": sorted(GOOGLE_HEALTH_NUTRIENTS - {"PROTEIN", "CARBOHYDRATES"}),
+            "correction_model": "delete existing anonymous item, then recreate it and use the Google-assigned ID from the completed create operation; no rollback",
+        },
         "recommended_tools": [
             "google_health.get_activity_data_points for paginated activity, steps, distance, calories, active minutes, heart rate, VO2, altitude, and route-adjacent metrics",
             "google_health.get_exercise_data_points for paginated exercise/workout sessions in a date range",
@@ -2121,6 +2713,9 @@ def google_health_activity_data_types_payload() -> dict[str, Any]:
             "google_health.get_sleep_data_points and google_health.summarize_sleep_day for sleep sessions, sleep stages, recovery, and daily log use",
             "google_health.get_health_metric_data_points and google_health.summarize_health_day for heart rate, resting HR, HRV, SpO2, respiratory rate, weight, body fat, temperature, and recovery metrics",
             "google_health.summarize_activity_day for daily log, brain, and fitness data sync summaries",
+            "google_health.log_meal for explicit meal-tracking requests after the agent has supplied timestamp, meal type, amount-bearing display names, and all core macros",
+            "google_health.get_nutrition_day and google_health.get_nutrition_range for meal and daily nutrition summaries",
+            "google_health.correct_nutrition_item and google_health.delete_nutrition_items for explicit corrections by data point ID",
         ],
     }
 
@@ -2201,6 +2796,345 @@ async def google_health_list_data_points_or_error(
         )
     except CapabilityError as error:
         return capability_error_payload(error)
+
+
+async def google_health_list_nutrition_items(
+    access_token: str,
+    *,
+    start_date: date,
+    end_date_exclusive: date,
+) -> list[dict[str, Any]]:
+    endpoint = "https://health.googleapis.com/v4/users/me/dataTypes/nutrition-log/dataPoints"
+    filter_expression = (
+        f'nutrition_log.interval.civil_start_time >= "{start_date.isoformat()}" '
+        f'AND nutrition_log.interval.civil_start_time < "{end_date_exclusive.isoformat()}"'
+    )
+    data_points: list[dict[str, Any]] = []
+    page_token: str | None = None
+    seen_page_tokens: set[str] = set()
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        while True:
+            params: dict[str, Any] = {"filter": filter_expression, "pageSize": 10_000}
+            if page_token is not None:
+                params["pageToken"] = page_token
+            response = await client.get(
+                endpoint,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+                params=params,
+            )
+            if response.status_code != 200:
+                raise CapabilityError("google_health_nutrition_read_failed", **sanitized_api_error(response))
+            try:
+                payload = response.json()
+            except json.JSONDecodeError as error:
+                raise CapabilityError("google_health_nutrition_read_invalid_json") from error
+            raw_data_points = payload.get("dataPoints", []) if isinstance(payload, dict) else []
+            if not isinstance(raw_data_points, list):
+                raise CapabilityError("google_health_nutrition_read_invalid_data_points")
+            for raw_data_point in raw_data_points:
+                data_points.append(google_health_nutrition_item_from_data_point(raw_data_point))
+
+            next_page_token = payload.get("nextPageToken") if isinstance(payload, dict) else None
+            if not isinstance(next_page_token, str) or not next_page_token:
+                break
+            if next_page_token in seen_page_tokens:
+                raise CapabilityError("google_health_nutrition_repeated_page_token")
+            seen_page_tokens.add(next_page_token)
+            page_token = next_page_token
+    return data_points
+
+
+async def google_health_get_nutrition_data_point(access_token: str, data_point_id: str) -> dict[str, Any]:
+    endpoint = (
+        "https://health.googleapis.com/v4/users/me/dataTypes/nutrition-log/"
+        f"dataPoints/{data_point_id}"
+    )
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(
+            endpoint,
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+        )
+    if response.status_code != 200:
+        raise CapabilityError(
+            "google_health_nutrition_item_read_failed",
+            data_point_id=data_point_id,
+            **sanitized_api_error(response),
+        )
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as error:
+        raise CapabilityError("google_health_nutrition_item_read_invalid_json", data_point_id=data_point_id) from error
+    if not isinstance(payload, dict):
+        raise CapabilityError("google_health_nutrition_item_read_invalid_json_shape", data_point_id=data_point_id)
+    return payload
+
+
+async def google_health_create_nutrition_data_point(
+    access_token: str,
+    data_point: dict[str, Any],
+) -> dict[str, Any]:
+    endpoint = "https://health.googleapis.com/v4/users/me/dataTypes/nutrition-log/dataPoints"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json=data_point,
+        )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise CapabilityError("google_health_nutrition_create_failed", **sanitized_api_error(response))
+    try:
+        return google_health_operation_summary(response.json())
+    except json.JSONDecodeError as error:
+        raise CapabilityError("google_health_nutrition_create_invalid_json") from error
+
+
+async def google_health_batch_delete_nutrition_data_points(
+    access_token: str,
+    data_point_ids: list[str],
+) -> dict[str, Any]:
+    endpoint = "https://health.googleapis.com/v4/users/me/dataTypes/nutrition-log/dataPoints:batchDelete"
+    names = [google_health_nutrition_data_point_name(data_point_id) for data_point_id in data_point_ids]
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={"names": names},
+        )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise CapabilityError("google_health_nutrition_delete_failed", **sanitized_api_error(response))
+    try:
+        return google_health_operation_summary(response.json())
+    except json.JSONDecodeError as error:
+        raise CapabilityError("google_health_nutrition_delete_invalid_json") from error
+
+
+async def create_google_health_meal(access_token: str, meal: dict[str, Any]) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    for item in meal["items"]:
+        data_point_id, data_point = build_google_health_nutrition_data_point(
+            timestamp=meal["timestamp"],
+            utc_offset=meal["utc_offset"],
+            meal_type=meal["meal_type"],
+            item=item,
+        )
+        try:
+            operation = await google_health_create_nutrition_data_point(access_token, data_point)
+            result = {
+                "ok": google_health_operation_accepted(operation),
+                "requested_data_point_id": data_point_id,
+                "display_name": item["display_name"],
+                "operation": operation,
+            }
+            if isinstance(operation.get("data_point_id"), str):
+                result["data_point_id"] = operation["data_point_id"]
+            results.append(result)
+        except CapabilityError as error:
+            results.append(
+                {
+                    **capability_error_payload(error),
+                    "requested_data_point_id": data_point_id,
+                    "display_name": item["display_name"],
+                }
+            )
+        except httpx.HTTPError as error:
+            results.append(
+                {
+                    "ok": False,
+                    "error": type(error).__name__,
+                    "requested_data_point_id": data_point_id,
+                    "display_name": item["display_name"],
+                }
+            )
+
+    accepted_count = sum(1 for result in results if result.get("ok") is True)
+    return {
+        "ok": accepted_count == len(results),
+        "endpoint": "google_health.nutrition_log.create",
+        "timestamp": meal["timestamp"],
+        "meal_type": meal["meal_type"],
+        "requested_count": len(results),
+        "accepted_count": accepted_count,
+        "failed_count": len(results) - accepted_count,
+        "operation_polling": False,
+        "results": results,
+    }
+
+
+def normalize_google_health_nutrition_correction_changes(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise CapabilityError("changes_must_be_object")
+    if not value:
+        raise CapabilityError("changes_required")
+    allowed = {
+        "timestamp",
+        "meal_type",
+        "display_name",
+        "energy_kcal",
+        "protein_g",
+        "carbohydrate_g",
+        "fat_g",
+        "energy_from_fat_kcal",
+        "additional_nutrients_g",
+    }
+    unsupported = sorted(set(value) - allowed)
+    if unsupported:
+        raise CapabilityError("changes_contains_unsupported_fields", fields=unsupported)
+
+    changes: dict[str, Any] = {}
+    if "timestamp" in value:
+        timestamp, _ = normalize_google_health_nutrition_timestamp(value["timestamp"])
+        changes["timestamp"] = timestamp
+    if "meal_type" in value:
+        changes["meal_type"] = normalize_google_health_meal_type(value["meal_type"])
+    if "display_name" in value:
+        display_name = value["display_name"]
+        if not isinstance(display_name, str) or not display_name.strip():
+            raise CapabilityError("changes_display_name_required")
+        if len(display_name.strip()) > 1000:
+            raise CapabilityError("changes_display_name_too_long", maximum=1000)
+        changes["display_name"] = display_name.strip()
+    for field in ("energy_kcal", "protein_g", "carbohydrate_g", "fat_g", "energy_from_fat_kcal"):
+        if field in value:
+            changes[field] = normalize_google_health_nutrition_number(value[field], f"changes_{field}")
+    if "additional_nutrients_g" in value:
+        changes["additional_nutrients_g"] = normalize_google_health_additional_nutrients(
+            value["additional_nutrients_g"],
+            name="changes_additional_nutrients_g",
+        )
+    return changes
+
+
+async def correct_google_health_nutrition_item(
+    access_token: str,
+    *,
+    data_point_id: str,
+    changes: dict[str, Any],
+) -> dict[str, Any]:
+    existing_data_point = await google_health_get_nutrition_data_point(access_token, data_point_id)
+    existing_nutrition_log = existing_data_point.get("nutritionLog")
+    if not isinstance(existing_nutrition_log, dict):
+        raise CapabilityError("nutrition_log_missing")
+    identified_food = existing_nutrition_log.get("food")
+    if isinstance(identified_food, str) and identified_food.strip():
+        raise CapabilityError(
+            "nutrition_correction_requires_anonymous_item",
+            data_point_id=data_point_id,
+        )
+    existing = google_health_nutrition_item_from_data_point(existing_data_point)
+
+    timestamp = changes.get("timestamp", existing["datetime"])
+    normalized_timestamp, utc_offset = normalize_google_health_nutrition_timestamp(timestamp)
+    meal_type = changes.get("meal_type", existing["meal_type"])
+    item_fields = {
+        key: value
+        for key, value in existing.items()
+        if key
+        in {
+            "display_name",
+            "energy_kcal",
+            "protein_g",
+            "carbohydrate_g",
+            "fat_g",
+            "energy_from_fat_kcal",
+            "additional_nutrients_g",
+        }
+    }
+    item_fields.update({key: value for key, value in changes.items() if key not in {"timestamp", "meal_type"}})
+    normalized_item = normalize_google_health_nutrition_item(item_fields)
+
+    delete_operation = await google_health_batch_delete_nutrition_data_points(access_token, [data_point_id])
+    if not google_health_operation_accepted(delete_operation):
+        return {
+            "ok": False,
+            "endpoint": "google_health.nutrition_log.correct",
+            "original_data_point_id": data_point_id,
+            "delete_accepted": False,
+            "replacement_accepted": False,
+            "delete_operation": delete_operation,
+            "operation_polling": False,
+        }
+
+    replacement_id, replacement_data_point = build_google_health_nutrition_data_point(
+        timestamp=normalized_timestamp,
+        utc_offset=utc_offset,
+        meal_type=meal_type,
+        item=normalized_item,
+    )
+    try:
+        create_operation = await google_health_create_nutrition_data_point(access_token, replacement_data_point)
+    except CapabilityError as error:
+        return {
+            "ok": False,
+            "endpoint": "google_health.nutrition_log.correct",
+            "original_data_point_id": data_point_id,
+            "requested_replacement_data_point_id": replacement_id,
+            "delete_accepted": True,
+            "replacement_accepted": False,
+            "delete_operation": delete_operation,
+            "create_error": capability_error_payload(error),
+            "operation_polling": False,
+            "rollback_attempted": False,
+        }
+    except httpx.HTTPError as error:
+        return {
+            "ok": False,
+            "endpoint": "google_health.nutrition_log.correct",
+            "original_data_point_id": data_point_id,
+            "requested_replacement_data_point_id": replacement_id,
+            "delete_accepted": True,
+            "replacement_accepted": False,
+            "delete_operation": delete_operation,
+            "create_error": {"ok": False, "error": type(error).__name__},
+            "operation_polling": False,
+            "rollback_attempted": False,
+        }
+
+    replacement_accepted = google_health_operation_accepted(create_operation)
+    result = {
+        "ok": replacement_accepted,
+        "endpoint": "google_health.nutrition_log.correct",
+        "original_data_point_id": data_point_id,
+        "requested_replacement_data_point_id": replacement_id,
+        "delete_accepted": True,
+        "replacement_accepted": replacement_accepted,
+        "delete_operation": delete_operation,
+        "create_operation": create_operation,
+        "operation_polling": False,
+        "rollback_attempted": False,
+    }
+    if isinstance(create_operation.get("data_point_id"), str):
+        result["new_data_point_id"] = create_operation["data_point_id"]
+    return result
+
+
+def normalize_google_health_nutrition_data_point_ids(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        raise CapabilityError("data_point_ids_must_be_list")
+    if not values:
+        raise CapabilityError("data_point_ids_required")
+    if len(values) > GOOGLE_HEALTH_NUTRITION_MAX_DELETE_ITEMS:
+        raise CapabilityError(
+            "too_many_nutrition_data_point_ids",
+            maximum=GOOGLE_HEALTH_NUTRITION_MAX_DELETE_ITEMS,
+            provided=len(values),
+        )
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        data_point_id = normalize_google_health_nutrition_data_point_id(value)
+        if data_point_id not in seen:
+            seen.add(data_point_id)
+            normalized.append(data_point_id)
+    return normalized
 
 
 async def google_health_daily_rollup(
@@ -2869,6 +3803,10 @@ def build_mcp() -> FastMCP:
             access_token, wrote_metadata = await refresh_google_access_token(openbao)
             status = await fetch_google_health_access_status(access_token)
             status["token_metadata_updated"] = wrote_metadata
+            status["required_scopes"] = [
+                *GOOGLE_HEALTH_REQUIRED_READONLY_SCOPES,
+                GOOGLE_HEALTH_NUTRITION_WRITE_SCOPE,
+            ]
             return status
         except OpenBaoError as error:
             emit_event(
@@ -2887,7 +3825,7 @@ def build_mcp() -> FastMCP:
 
     @mcp.tool(name="google_health.list_data_types")
     async def google_health_list_data_types(ctx: Context) -> dict[str, Any]:
-        """List documented Google Health fitness, exercise, workout, activity, sleep, health metrics, heart rate, HRV, recovery, weight, body fat, oxygen saturation, respiratory rate, route, location, TCX, health datapoints, date range tools, and required readonly scopes."""
+        """List documented Google Health fitness, exercise, workout, activity, sleep, health metrics, nutrition, route, location, TCX, health datapoints, date range tools, and required read/write scopes."""
         emit_event("mcp_tool_call", tool="google_health.list_data_types", client_id="heisenberg-access-mcp-env-token")
         return google_health_activity_data_types_payload()
 
@@ -3200,6 +4138,229 @@ def build_mcp() -> FastMCP:
             return capability_error_payload(error)
         except httpx.HTTPError as error:
             emit_event("capability_error", tool="google_health.summarize_health_day", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.log_meal")
+    async def google_health_log_meal(
+        ctx: Context,
+        timestamp: str,
+        meal_type: str,
+        items: list[dict[str, Any]],
+        confirm: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Write one anonymous nutrition-log point per food only for an explicit meal-tracking request. Before calling, the agent MUST supply an RFC3339 timestamp with the user's local UTC offset; meal_type as BEFORE_BREAKFAST, BREAKFAST, BEFORE_LUNCH, LUNCH, BEFORE_DINNER, DINNER, AFTER_DINNER, SNACK, or ANYTIME; and every item's amount-bearing display_name, energy_kcal, protein_g, carbohydrate_g, and fat_g. Optional native fields are energy_from_fat_kcal and additional_nutrients_g. The MCP never estimates missing values. Incidental food mentions are not authorization to call this tool. Requires confirm=true unless dry_run=true."""
+        emit_event("mcp_tool_call", tool="google_health.log_meal", client_id="heisenberg-access-mcp-env-token")
+        try:
+            meal = normalize_google_health_meal(timestamp, meal_type, items)
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "method": "POST",
+                    "endpoint": "google_health.nutrition_log.create",
+                    "timestamp": meal["timestamp"],
+                    "meal_type": meal["meal_type"],
+                    "item_count": len(meal["items"]),
+                    "items": meal["items"],
+                    "requires_confirm": True,
+                }
+            ensure_write_confirmed("POST", confirm)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await create_google_health_meal(access_token, meal)
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.log_meal",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.log_meal", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.log_meal", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.get_nutrition_day")
+    async def google_health_get_nutrition_day(ctx: Context, date: str) -> dict[str, Any]:
+        """Read one civil nutrition day from Google Health, including individual food items with correction IDs, meal groups by datetime and MealType, and core macro totals."""
+        emit_event("mcp_tool_call", tool="google_health.get_nutrition_day", client_id="heisenberg-access-mcp-env-token")
+        try:
+            target_date = parse_iso_date(date)
+            end_date_exclusive = google_health_nutrition_range_end_exclusive(target_date, target_date)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            items = await google_health_list_nutrition_items(
+                access_token,
+                start_date=target_date,
+                end_date_exclusive=end_date_exclusive,
+            )
+            summary = summarize_google_health_nutrition_day(target_date, items)
+            return {
+                "ok": True,
+                "endpoint": "google_health.nutrition_log.day",
+                "required_scope": GOOGLE_HEALTH_NUTRITION_READ_SCOPE,
+                "token_metadata_updated": wrote_metadata,
+                **summary,
+            }
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.get_nutrition_day",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.get_nutrition_day", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.get_nutrition_day", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.get_nutrition_range")
+    async def google_health_get_nutrition_range(
+        ctx: Context,
+        start_date: str,
+        end_date: str,
+    ) -> dict[str, Any]:
+        """Read an inclusive civil date range as compact per-day core macro totals and meal totals grouped by datetime and MealType; raw food items are intentionally omitted."""
+        emit_event("mcp_tool_call", tool="google_health.get_nutrition_range", client_id="heisenberg-access-mcp-env-token")
+        try:
+            normalized_start = parse_iso_date(start_date, "start_date")
+            normalized_end = parse_iso_date(end_date, "end_date")
+            end_date_exclusive = google_health_nutrition_range_end_exclusive(normalized_start, normalized_end)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            items = await google_health_list_nutrition_items(
+                access_token,
+                start_date=normalized_start,
+                end_date_exclusive=end_date_exclusive,
+            )
+            days = summarize_google_health_nutrition_range(normalized_start, normalized_end, items)
+            return {
+                "ok": True,
+                "endpoint": "google_health.nutrition_log.range",
+                "required_scope": GOOGLE_HEALTH_NUTRITION_READ_SCOPE,
+                "start_date": normalized_start.isoformat(),
+                "end_date": normalized_end.isoformat(),
+                "day_count": len(days),
+                "days": days,
+                "token_metadata_updated": wrote_metadata,
+            }
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.get_nutrition_range",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.get_nutrition_range", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.get_nutrition_range", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.correct_nutrition_item")
+    async def google_health_correct_nutrition_item(
+        ctx: Context,
+        data_point_id: str,
+        changes: dict[str, Any],
+        confirm: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Partially correct one anonymous nutrition item by its concrete Google data point ID. changes may contain timestamp, meal_type, display_name, energy_kcal, protein_g, carbohydrate_g, fat_g, energy_from_fat_kcal, or additional_nutrients_g. The MCP reads and preserves unchanged fields, then deletes and recreates the item with a new ID because Google says anonymous logs are not editable. No rollback is attempted. Requires confirm=true unless dry_run=true."""
+        emit_event("mcp_tool_call", tool="google_health.correct_nutrition_item", client_id="heisenberg-access-mcp-env-token")
+        try:
+            normalized_id = normalize_google_health_nutrition_data_point_id(data_point_id)
+            normalized_changes = normalize_google_health_nutrition_correction_changes(changes)
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "method": "DELETE+POST",
+                    "endpoint": "google_health.nutrition_log.correct",
+                    "data_point_id": normalized_id,
+                    "changes": normalized_changes,
+                    "requires_confirm": True,
+                    "rollback": False,
+                }
+            ensure_write_confirmed("DELETE", confirm)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            payload = await correct_google_health_nutrition_item(
+                access_token,
+                data_point_id=normalized_id,
+                changes=normalized_changes,
+            )
+            payload["token_metadata_updated"] = wrote_metadata
+            return payload
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.correct_nutrition_item",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.correct_nutrition_item", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.correct_nutrition_item", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
+    @mcp.tool(name="google_health.delete_nutrition_items")
+    async def google_health_delete_nutrition_items(
+        ctx: Context,
+        data_point_ids: list[str],
+        confirm: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Delete one or more nutrition-log items only by concrete Google data point IDs. Requires confirm=true unless dry_run=true."""
+        emit_event("mcp_tool_call", tool="google_health.delete_nutrition_items", client_id="heisenberg-access-mcp-env-token")
+        try:
+            normalized_ids = normalize_google_health_nutrition_data_point_ids(data_point_ids)
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "method": "POST",
+                    "endpoint": "google_health.nutrition_log.batch_delete",
+                    "data_point_ids": normalized_ids,
+                    "count": len(normalized_ids),
+                    "requires_confirm": True,
+                }
+            ensure_write_confirmed("POST", confirm)
+            access_token, wrote_metadata = await refresh_google_access_token(openbao)
+            operation = await google_health_batch_delete_nutrition_data_points(access_token, normalized_ids)
+            accepted = google_health_operation_accepted(operation)
+            return {
+                "ok": accepted,
+                "endpoint": "google_health.nutrition_log.batch_delete",
+                "data_point_ids": normalized_ids,
+                "requested_count": len(normalized_ids),
+                "accepted": accepted,
+                "operation": operation,
+                "operation_polling": False,
+                "token_metadata_updated": wrote_metadata,
+            }
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="google_health.delete_nutrition_items",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="google_health.delete_nutrition_items", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="google_health.delete_nutrition_items", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
     @mcp.tool(name="elevenlabs.request")
