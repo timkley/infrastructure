@@ -54,6 +54,16 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-headers"
       - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-compress.compress=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-headers,${COMPOSE_PROJECT_NAME}-compress"
+      # UniFi devices use /inform for controller communication. Route it to
+      # port 8080 instead of the GUI/API service on port 8443.
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.entrypoints=websecure"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`) && Path(`/inform`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.priority=100"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.tls.certresolver=lets-encrypt"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.service=${COMPOSE_PROJECT_NAME}-inform"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}-inform.loadbalancer.server.port=8080"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}-inform.loadbalancer.server.scheme=http"
   db:
     image: mongo:3.6
     restart: always
