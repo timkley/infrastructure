@@ -24,6 +24,16 @@ export BAO_ADDR=http://127.0.0.1:8200
 bao status
 ```
 
+### Host-Updates und Neustarts
+
+Security-Updates werden durch `unattended-upgrades` automatisch installiert.
+Automatische Neustarts bleiben deaktiviert, weil OpenBao mit Shamir-Seal nach
+jedem Neustart manuell entsiegelt werden muss. Ein erforderlicher Neustart wird
+über `/var/run/reboot-required` und den SSH-MOTD-Hinweis angezeigt.
+
+Nach einem kontrollierten Host-Neustart OpenBao mit drei Unseal-Keys aus
+Bitwarden entsiegeln und anschließend den Smoke-Test ausführen.
+
 ## Initialisierung
 
 Nur einmal ausführen. Die Ausgabe enthält Root-Token und Unseal-Keys und darf nicht ins Git-Repo oder in Chat-Threads kopiert werden.

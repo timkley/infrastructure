@@ -14,7 +14,7 @@ services:
       - ./data:/openbao/data
       - ./audit:/openbao/audit
     healthcheck:
-      test: ["CMD-SHELL", "bao status -address=http://127.0.0.1:8200 >/dev/null || test $$? -eq 2"]
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
       interval: 30s
       timeout: 10s
       retries: 5
