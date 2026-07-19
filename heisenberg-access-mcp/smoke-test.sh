@@ -79,6 +79,7 @@ async def main() -> None:
                 "freshrss.request",
                 "tandoor.request",
                 "elevenlabs.request",
+                "elevenlabs.speech_to_text",
                 "elevenlabs.text_to_speech",
             }
             missing = sorted(expected.difference(tool_names))

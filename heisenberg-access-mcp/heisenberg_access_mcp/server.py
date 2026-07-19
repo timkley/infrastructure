@@ -46,6 +46,9 @@ OPENBAO_ALLOWED_SECRETS = {
 OPENBAO_WRITABLE_SECRETS = {"google_health_oauth_token", "x_oauth"}
 DEFAULT_ARTIFACT_DIR = "/var/lib/heisenberg-access-mcp/artifacts"
 MAX_ARTIFACT_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_AUDIO_INPUT_ARTIFACT_BYTES = 500 * 1024 * 1024
+ELEVENLABS_TRANSCRIPTION_TIMEOUT_SECONDS = 6 * 60 * 60
+STALE_ARTIFACT_UPLOAD_AGE_SECONDS = 24 * 60 * 60
 DEFAULT_INLINE_RESPONSE_BYTES = 256 * 1024
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 SERVICE_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
@@ -83,6 +86,12 @@ X_TWEET_ID_RE = re.compile(r"(?<!\d)(\d{5,25})(?!\d)")
 X_USER_ID_RE = re.compile(r"^\d{1,25}$")
 ARTIFACT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 ELEVENLABS_VOICE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+SAFE_UPLOAD_FILENAME_RE = re.compile(r"^[^/\\\x00-\x1f]{1,255}$")
+ELEVENLABS_SPEECH_INPUT_MIME_TYPES = {
+    "audio/mp4",
+    "audio/m4a",
+    "audio/x-m4a",
+}
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 GOOGLE_HEALTH_CIVIL_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2})?$")
 GOOGLE_HEALTH_EXERCISE_DATA_POINT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -708,6 +717,14 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "secret_access": "server-side OpenBao API key",
         "returns": "artifact metadata only; audio is stored server-side",
     },
+    "elevenlabs.speech_to_text": {
+        "tool": "elevenlabs.speech_to_text",
+        "enabled": True,
+        "secret_access": "server-side OpenBao API key",
+        "scope": "transcribe one private uploaded M4A artifact with Scribe v2, word timestamps, audio events, and up to 10 diarized speakers",
+        "writes": "calls ElevenLabs only with confirm=true; supports dry_run and stores the full JSON response as a private artifact",
+        "returns": "compact metadata and private artifact download instructions only",
+    },
     "homeassistant.request": {
         "tool": "homeassistant.request",
         "enabled": True,
@@ -814,6 +831,9 @@ def extension_for_mime_type(mime_type: str) -> str:
         "audio/wav": ".wav",
         "audio/x-wav": ".wav",
         "audio/ogg": ".ogg",
+        "audio/mp4": ".m4a",
+        "audio/m4a": ".m4a",
+        "audio/x-m4a": ".m4a",
         "audio/webm": ".webm",
         "audio/flac": ".flac",
         "application/vnd.garmin.tcx+xml": ".tcx",
@@ -875,6 +895,148 @@ def store_artifact(content: bytes, mime_type: str, metadata: dict[str, Any]) -> 
     }
     metadata_path_for(artifact_id).write_text(json.dumps(payload, sort_keys=True))
     return payload
+
+
+def cleanup_stale_artifact_uploads() -> None:
+    cutoff = utc_now().timestamp() - STALE_ARTIFACT_UPLOAD_AGE_SECONDS
+    try:
+        candidates = artifact_dir().glob(".*.upload")
+        for path in candidates:
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError as error:
+                LOGGER.warning("stale_artifact_upload_cleanup_failed", extra={"error": type(error).__name__})
+    except OSError as error:
+        LOGGER.warning("stale_artifact_upload_scan_failed", extra={"error": type(error).__name__})
+
+
+def has_iso_bmff_ftyp_signature(header: bytes) -> bool:
+    if len(header) < 12 or header[4:8] != b"ftyp":
+        return False
+    box_size = int.from_bytes(header[:4], byteorder="big")
+    return box_size == 1 or box_size >= 12
+
+
+async def store_audio_input_artifact(request: Request) -> dict[str, Any]:
+    mime_type = request.headers.get("content-type", "").split(";", maxsplit=1)[0].strip().lower()
+    if mime_type not in ELEVENLABS_SPEECH_INPUT_MIME_TYPES:
+        raise CapabilityError(
+            "audio_upload_mime_type_not_allowed",
+            allowed_mime_types=sorted(ELEVENLABS_SPEECH_INPUT_MIME_TYPES),
+        )
+
+    original_filename = request.headers.get("x-artifact-filename", "").strip()
+    if not SAFE_UPLOAD_FILENAME_RE.fullmatch(original_filename):
+        raise CapabilityError("audio_upload_filename_invalid")
+    if Path(original_filename).suffix.lower() != ".m4a":
+        raise CapabilityError("audio_upload_filename_must_end_in_m4a")
+
+    content_length = request.headers.get("content-length", "").strip()
+    try:
+        declared_size = int(content_length)
+    except ValueError as error:
+        raise CapabilityError("audio_upload_content_length_required") from error
+    if declared_size < 1 or declared_size > MAX_AUDIO_INPUT_ARTIFACT_BYTES:
+        raise CapabilityError(
+            "audio_upload_size_invalid",
+            max_bytes=MAX_AUDIO_INPUT_ARTIFACT_BYTES,
+        )
+
+    target_dir = artifact_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_stale_artifact_uploads()
+    artifact_id = secrets.token_urlsafe(24)
+    path = artifact_path_for(artifact_id, mime_type)
+    partial_path = target_dir / f".{artifact_id}.upload"
+    sha256 = hashlib.sha256()
+    byte_size = 0
+    signature_header = bytearray()
+    try:
+        with partial_path.open("xb") as output:
+            async for chunk in request.stream():
+                byte_size += len(chunk)
+                if byte_size > declared_size or byte_size > MAX_AUDIO_INPUT_ARTIFACT_BYTES:
+                    raise CapabilityError(
+                        "audio_upload_size_invalid",
+                        max_bytes=MAX_AUDIO_INPUT_ARTIFACT_BYTES,
+                    )
+                output.write(chunk)
+                sha256.update(chunk)
+                if len(signature_header) < 16:
+                    signature_header.extend(chunk[: 16 - len(signature_header)])
+        if byte_size != declared_size:
+            raise CapabilityError("audio_upload_content_length_mismatch")
+        if not has_iso_bmff_ftyp_signature(bytes(signature_header)):
+            raise CapabilityError("audio_upload_invalid_m4a_signature")
+        os.replace(partial_path, path)
+    except BaseException:
+        partial_path.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
+        raise
+
+    payload = {
+        "artifact_id": artifact_id,
+        "mime_type": mime_type,
+        "byte_size": byte_size,
+        "sha256": sha256.hexdigest(),
+        "created_at": iso_now(),
+        "filename": path.name,
+        "original_filename": original_filename,
+        "artifact_kind": "elevenlabs_speech_input",
+    }
+    try:
+        metadata_path_for(artifact_id).write_text(json.dumps(payload, sort_keys=True))
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return payload
+
+
+def elevenlabs_speech_input_artifact(artifact_id: str) -> tuple[Path, dict[str, Any]]:
+    if not ARTIFACT_ID_RE.fullmatch(artifact_id):
+        raise CapabilityError("elevenlabs_input_artifact_id_invalid")
+    metadata = read_artifact_metadata(artifact_id)
+    if metadata is None or metadata.get("artifact_kind") != "elevenlabs_speech_input":
+        raise CapabilityError("elevenlabs_input_artifact_not_found")
+
+    mime_type = metadata.get("mime_type")
+    byte_size = metadata.get("byte_size")
+    filename = metadata.get("filename")
+    expected_sha256 = metadata.get("sha256")
+    if (
+        mime_type not in ELEVENLABS_SPEECH_INPUT_MIME_TYPES
+        or not isinstance(byte_size, int)
+        or byte_size < 1
+        or byte_size > MAX_AUDIO_INPUT_ARTIFACT_BYTES
+        or not isinstance(filename, str)
+        or Path(filename).name != filename
+        or not isinstance(expected_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+    ):
+        raise CapabilityError("elevenlabs_input_artifact_metadata_invalid")
+
+    path = artifact_dir() / filename
+    if not path.is_file() or path.stat().st_size != byte_size:
+        raise CapabilityError("elevenlabs_input_artifact_file_invalid")
+    actual_sha256 = hashlib.sha256()
+    with path.open("rb") as input_file:
+        for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+            actual_sha256.update(chunk)
+    if not hmac.compare_digest(actual_sha256.hexdigest(), expected_sha256):
+        raise CapabilityError("elevenlabs_input_artifact_sha256_mismatch")
+    return path, metadata
+
+
+def delete_speech_input_artifact(path: Path, artifact_id: str) -> None:
+    for target in (metadata_path_for(artifact_id), path):
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as error:
+            LOGGER.warning(
+                "speech_input_artifact_cleanup_failed",
+                extra={"artifact_id": artifact_id, "error": type(error).__name__},
+            )
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -3553,6 +3715,153 @@ async def run_elevenlabs_text_to_speech(
     return {"ok": True, **artifact}
 
 
+async def run_elevenlabs_speech_to_text(
+    api_key: str,
+    resource_url: str,
+    input_artifact_id: str,
+    num_speakers: int,
+    language_code: str,
+    confirm: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    path, input_metadata = elevenlabs_speech_input_artifact(input_artifact_id)
+    if isinstance(num_speakers, bool) or not isinstance(num_speakers, int) or not 1 <= num_speakers <= 10:
+        raise CapabilityError("elevenlabs_num_speakers_invalid", minimum=1, maximum=10)
+    language_code = language_code.strip().lower()
+    if not re.fullmatch(r"[a-z]{2,3}", language_code):
+        raise CapabilityError("elevenlabs_language_code_invalid")
+
+    request_summary = {
+        "input_artifact_id": input_artifact_id,
+        "input_byte_size": input_metadata["byte_size"],
+        "model_id": "scribe_v2",
+        "language_code": language_code,
+        "num_speakers": num_speakers,
+        "diarize": True,
+        "timestamps_granularity": "word",
+        "tag_audio_events": True,
+    }
+    if dry_run:
+        return {"ok": True, "dry_run": True, **request_summary}
+    ensure_write_confirmed("POST", confirm)
+
+    timeout = httpx.Timeout(
+        ELEVENLABS_TRANSCRIPTION_TIMEOUT_SECONDS,
+        connect=30.0,
+        pool=30.0,
+    )
+    with path.open("rb") as audio:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                "https://api.elevenlabs.io/v1/speech-to-text",
+                headers={"xi-api-key": api_key, "Accept": "application/json"},
+                data={
+                    "model_id": "scribe_v2",
+                    "language_code": language_code,
+                    "num_speakers": str(num_speakers),
+                    "diarize": "true",
+                    "timestamps_granularity": "word",
+                    "tag_audio_events": "true",
+                },
+                files={
+                    "file": (
+                        input_metadata["original_filename"],
+                        audio,
+                        input_metadata["mime_type"],
+                    )
+                },
+            ) as response:
+                response_limit = (
+                    MAX_ARTIFACT_DOWNLOAD_BYTES if response.status_code == 200 else inline_response_limit()
+                )
+                response_bytes = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(response_bytes) + len(chunk) > response_limit:
+                        if response.status_code == 200:
+                            raise CapabilityError(
+                                "elevenlabs_transcription_artifact_too_large",
+                                max_artifact_bytes=MAX_ARTIFACT_DOWNLOAD_BYTES,
+                            )
+                        return {
+                            "ok": False,
+                            "http_status": response.status_code,
+                            "error": "elevenlabs_error_response_too_large",
+                        }
+                    response_bytes.extend(chunk)
+                response_status = response.status_code
+                response_headers = response.headers
+
+    if response_status != 200:
+        buffered_response = httpx.Response(
+            response_status,
+            headers=response_headers,
+            content=bytes(response_bytes),
+        )
+        return {
+            "ok": False,
+            "http_status": response_status,
+            "error": sanitized_api_error(buffered_response),
+        }
+    content_type = response_headers.get("content-type", "").split(";", maxsplit=1)[0].strip().lower()
+    if content_type != "application/json":
+        raise CapabilityError(
+            "elevenlabs_transcription_unexpected_content_type",
+            content_type=content_type or None,
+        )
+    try:
+        transcript = json.loads(response_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CapabilityError("elevenlabs_transcription_invalid_json") from error
+    if not isinstance(transcript, dict):
+        raise CapabilityError("elevenlabs_transcription_invalid_json_shape")
+
+    words = transcript.get("words")
+    word_count = len(words) if isinstance(words, list) else None
+    speaker_ids = (
+        sorted(
+            {
+                word["speaker_id"]
+                for word in words
+                if isinstance(word, dict) and isinstance(word.get("speaker_id"), str)
+            }
+        )
+        if isinstance(words, list)
+        else []
+    )
+    artifact = store_artifact(
+        bytes(response_bytes),
+        "application/json",
+        {
+            "artifact_kind": "elevenlabs_speech_transcript",
+            "provider": "elevenlabs",
+            "model_id": "scribe_v2",
+            "input_artifact_id": input_artifact_id,
+            "language_code_requested": language_code,
+            "num_speakers_requested": num_speakers,
+        },
+    )
+    delete_speech_input_artifact(path, input_artifact_id)
+    return {
+        "ok": True,
+        "artifact_id": artifact["artifact_id"],
+        "mime_type": artifact["mime_type"],
+        "byte_size": artifact["byte_size"],
+        "sha256": artifact["sha256"],
+        "created_at": artifact["created_at"],
+        "model_id": "scribe_v2",
+        "language_code": transcript.get("language_code"),
+        "language_probability": transcript.get("language_probability"),
+        "word_count": word_count,
+        "speaker_count": len(speaker_ids),
+        "download": {
+            "url": artifact_download_url(resource_url, artifact["artifact_id"]),
+            "authorization": "Bearer token required; same private MCP bearer token",
+            "exposure": "same private MCP HTTP service; Traefik remains disabled",
+        },
+    }
+
+
 def capability_error_payload(error: CapabilityError) -> dict[str, Any]:
     return {
         "ok": False,
@@ -4642,6 +4951,58 @@ def build_mcp() -> FastMCP:
             emit_event("capability_error", tool="elevenlabs.text_to_speech", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
+    @mcp.tool(name="elevenlabs.speech_to_text")
+    async def elevenlabs_speech_to_text(
+        ctx: Context,
+        input_artifact_id: str,
+        num_speakers: int = 10,
+        language_code: str = "deu",
+        confirm: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Transcribe one private M4A artifact with Scribe v2.
+
+        The full diarized result is stored as a private JSON artifact and never returned inline.
+        """
+        emit_event("mcp_tool_call", tool="elevenlabs.speech_to_text", client_id="heisenberg-access-mcp-env-token")
+        try:
+            if dry_run:
+                return await run_elevenlabs_speech_to_text(
+                    "",
+                    resource_url,
+                    input_artifact_id,
+                    num_speakers,
+                    language_code,
+                    False,
+                    True,
+                )
+            ensure_write_confirmed("POST", confirm)
+            secret = await openbao.read("elevenlabs")
+            api_key = required_secret_value(secret, "api_key")
+            return await run_elevenlabs_speech_to_text(
+                api_key,
+                resource_url,
+                input_artifact_id,
+                num_speakers,
+                language_code,
+                confirm,
+                False,
+            )
+        except OpenBaoError as error:
+            emit_event(
+                "capability_error",
+                tool="elevenlabs.speech_to_text",
+                error=error.code,
+                openbao_status=error.status_code,
+            )
+            return openbao_error_payload(error)
+        except CapabilityError as error:
+            emit_event("capability_error", tool="elevenlabs.speech_to_text", error=error.code)
+            return capability_error_payload(error)
+        except httpx.HTTPError as error:
+            emit_event("capability_error", tool="elevenlabs.speech_to_text", error=type(error).__name__)
+            return {"ok": False, "error": type(error).__name__}
+
     return mcp
 
 
@@ -4662,6 +5023,29 @@ async def download_artifact(request: Request) -> Response:
     return artifact_response_for(request.path_params["artifact_id"])
 
 
+async def upload_audio_artifact(request: Request) -> JSONResponse:
+    expected_token = require_env("HEISENBERG_ACCESS_MCP_TOKEN")
+    provided_token = bearer_token_from_request(request)
+    if provided_token is None or not hmac.compare_digest(provided_token, expected_token):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    try:
+        artifact = await store_audio_input_artifact(request)
+    except CapabilityError as error:
+        return JSONResponse(capability_error_payload(error), status_code=400)
+    return JSONResponse(
+        {
+            "ok": True,
+            "artifact_id": artifact["artifact_id"],
+            "mime_type": artifact["mime_type"],
+            "byte_size": artifact["byte_size"],
+            "sha256": artifact["sha256"],
+            "created_at": artifact["created_at"],
+            "artifact_kind": artifact["artifact_kind"],
+        },
+        status_code=201,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: Starlette):
     async with mcp_server.session_manager.run():
@@ -4671,6 +5055,7 @@ async def lifespan(_: Starlette):
 app = Starlette(
     routes=[
         Route("/health", health, methods=["GET"]),
+        Route("/artifacts/uploads/audio", upload_audio_artifact, methods=["POST"]),
         Route("/artifacts/{artifact_id}", download_artifact, methods=["GET"]),
         Mount("/", app=mcp_server.streamable_http_app()),
     ],

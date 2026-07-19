@@ -21,6 +21,7 @@ The MCP exposes status tools plus narrow service capabilities:
 - `google_health.get_nutrition_day(date)` returns individual foods with correction IDs, meal groups, and daily totals. `google_health.get_nutrition_range(start_date, end_date)` returns compact daily and meal totals without raw items.
 - `google_health.correct_nutrition_item(data_point_id, changes, confirm?, dry_run?)` partially corrects one anonymous item by deleting and recreating it with a new ID. `google_health.delete_nutrition_items(data_point_ids, confirm?, dry_run?)` batch-deletes concrete nutrition IDs.
 - `elevenlabs.text_to_speech(...)` creates speech through server-side ElevenLabs credentials after explicit `confirm=true` and stores the audio as a private runtime artifact. The MCP response returns metadata only: `artifact_id`, `mime_type`, `byte_size`, `sha256`, `created_at`, `voice_id`, `model_id`, `output_format`, and private download instructions.
+- `elevenlabs.speech_to_text(input_artifact_id, num_speakers=10, language_code="deu", confirm=false, dry_run=false)` transcribes a private uploaded M4A with Scribe v2. It always requests diarization, word timestamps, and audio-event tags. The maximum configured speaker count is 10. The full JSON transcript is stored as a private artifact; MCP returns compact metadata and download instructions only.
 - `elevenlabs.request(...)` is a service-scoped ElevenLabs request tool for `https://api.elevenlabs.io`. The API key is never returned. Known binary responses are stored as private artifacts, large JSON is redacted before artifact storage, and large text-like responses are refused.
 - `homeassistant.request(...)` is a service-scoped Home Assistant request tool for the `url` configured in OpenBao.
 - `freshrss.request(...)` is a service-scoped FreshRSS request tool for the `api_url` configured in OpenBao.
@@ -53,6 +54,22 @@ curl -H "Authorization: Bearer $HEISENBERG_ACCESS_MCP_TOKEN" \
 Large artifacts above the server download limit are refused before storage instead of streamed through MCP. Small JSON/text ElevenLabs responses can be returned directly by `elevenlabs.request`; malformed JSON is refused, large JSON responses are redacted before artifact storage, and large text-like responses are refused because reliable secret redaction is not guaranteed. Large list-style operations should be configured with provider-side pagination or replaced by a summarizing capability.
 
 Use dedicated tools, such as `elevenlabs.text_to_speech`, for binary or high-level workflows where the server should manage artifacts and metadata deliberately.
+
+### Upload and transcribe an M4A
+
+Speech-to-text input is uploaded directly to the private HTTP service, not passed through MCP as bytes or base64. The upload endpoint requires the same bearer token, an explicit supported audio MIME type, a safe `.m4a` filename, `Content-Length`, and a basic ISO-BMFF `ftyp` signature. It streams files up to 500 MiB into the private artifact volume.
+
+```bash
+curl --fail-with-body \
+  -X POST \
+  -H "Authorization: Bearer $HEISENBERG_ACCESS_MCP_TOKEN" \
+  -H "Content-Type: audio/mp4" \
+  -H "X-Artifact-Filename: session.m4a" \
+  --data-binary @session.m4a \
+  "http://lando:8020/artifacts/uploads/audio"
+```
+
+The response contains only the private input `artifact_id` and integrity metadata. First validate the planned provider request with `elevenlabs.speech_to_text(..., dry_run=true)`. Before a billable call, the server verifies the stored file against that SHA-256. The real provider call requires `confirm=true`, uses `POST https://api.elevenlabs.io/v1/speech-to-text` with `model_id=scribe_v2`, and may run for several hours for long recordings. Provider responses are streamed with a 100 MiB hard limit and must contain valid JSON before finalization. After the transcript artifact is finalized, its input audio and metadata are removed; failed or retryable calls preserve the input. Download the resulting JSON artifact with the same authenticated `/artifacts/<artifact_id>` flow shown above. Neither endpoint returns audio or transcript contents through MCP.
 
 ## X Bookmarks
 
@@ -235,6 +252,7 @@ Tools should stay explicit capabilities such as:
 - `google_health.correct_nutrition_item`
 - `google_health.delete_nutrition_items`
 - `elevenlabs.text_to_speech`
+- `elevenlabs.speech_to_text`
 - `elevenlabs.request`, `homeassistant.request`, `freshrss.request`, and `tandoor.request` scoped to fixed service base URLs
 
 Each tool should map to a narrow OpenBao policy and application-level behavior. Do not add generic secret-reading tools.
