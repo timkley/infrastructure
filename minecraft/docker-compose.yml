@@ -41,6 +41,7 @@ services:
         glitchcore
         terrablender
         servercore
+        spark
         simple-voice-chat
         xaeros-world-map
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
