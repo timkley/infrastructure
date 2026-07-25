@@ -26,6 +26,7 @@ services:
       PAPERLESS_TASK_WORKERS: "1"
       PAPERLESS_THREADS_PER_WORKER: "1"
       PAPERLESS_WEBSERVER_WORKERS: "1"
+      PAPERLESS_CONSUMER_DELETE_DUPLICATES: "true"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
