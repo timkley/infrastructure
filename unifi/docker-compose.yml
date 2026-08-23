@@ -1,41 +1,36 @@
 services:
   app:
-    image: "lscr.io/linuxserver/unifi-network-application:10.5.67-ls141@sha256:cb452744be875e091bad374999e90b08f34813d5bee03de814188de3d6eb5e99"
+    image: "jacobalberty/unifi:${TAG:-latest}"
     depends_on:
-      db:
-        condition: service_healthy
+      - db
+    init: true
     networks:
       - default
       - web
     restart: unless-stopped
-    environment:
-      PUID: "1000"
-      PGID: "1000"
-      TZ: Europe/Berlin
-      MONGO_USER: unifi
-      MONGO_PASS: "${MONGO_PASS:?Set MONGO_PASS in unifi/.env}"
-      MONGO_HOST: db
-      MONGO_PORT: "27017"
-      MONGO_DBNAME: unifi
-      MONGO_AUTHSOURCE: admin
-      MEM_STARTUP: "512"
-      MEM_LIMIT: "1024"
     volumes:
-      - config:/config
-      - ./backup:/config/data/backup
+      - dir:/unifi
+      - data:/unifi/data
+      - log:/unifi/log
+      - cert:/unifi/cert
+      - init:/unifi/init.d
+      - run:/var/run/unifi
+      # Mount local folder for backups and autobackups
+      - ./backup:/unifi/data/backup
+    user: unifi
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
+    environment:
+      DB_URI: mongodb://db/unifi
+      STATDB_URI: mongodb://db/unifi_stat
+      DB_NAME: unifi
+      JVM_INIT_HEAP_SIZE: "256M"
+      JVM_MAX_HEAP_SIZE: "512M"
     ports:
       # The adopted APs use the public IPv4 endpoints below. TCP 8080 is
       # restricted to Cloudflare source networks by the firewall unit.
       - "0.0.0.0:3478:3478/udp" # STUN
       - "0.0.0.0:8080:8080/tcp" # Device/controller communication
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "curl --fail --silent --insecure https://127.0.0.1:8443/status | grep -q '\"up\":true'"
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 90s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.entrypoints=websecure"
@@ -58,34 +53,30 @@ services:
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.service=${COMPOSE_PROJECT_NAME}-inform"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}-inform.loadbalancer.server.port=8080"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}-inform.loadbalancer.server.scheme=http"
-
   db:
-    image: "mongo:8.0.29-noble@sha256:021b2d5ae9d253f2cca17491cc8d03aed8df3c840f3252066aa62d3277fc406e"
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USER:?Set MONGO_ROOT_USER in unifi/.env}"
-      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASS:?Set MONGO_ROOT_PASS in unifi/.env}"
-      MONGO_USER: unifi
-      MONGO_PASS: "${MONGO_PASS:?Set MONGO_PASS in unifi/.env}"
-      MONGO_DBNAME: unifi
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          mongosh --quiet --username "$$MONGO_INITDB_ROOT_USERNAME"
-          --password "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin
-          --eval 'db.adminCommand({ping: 1}).ok' | grep -q 1
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
+    image: mongo:3.6
+    restart: always
     volumes:
-      - mongodb:/data/db
-      - ./init-mongo.sh:/docker-entrypoint-initdb.d/init-mongo.sh:ro
+      - db:/data/db
+      - dbcfg:/data/configdb
+  logs:
+    image: bash
+    depends_on:
+      - app
+    command: bash -c 'tail -F /unifi/log/*.log'
+    restart: always
+    volumes:
+      - log:/unifi/log
 
 volumes:
-  config:
-  mongodb:
+  db:
+  dbcfg:
+  data:
+  log:
+  cert:
+  init:
+  dir:
+  run:
 
 networks:
   web:
