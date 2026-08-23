@@ -11,7 +11,7 @@
 
 services:
   app:
-    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
     restart: unless-stopped
     depends_on:
       - broker
