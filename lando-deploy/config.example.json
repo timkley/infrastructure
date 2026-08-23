@@ -69,8 +69,11 @@
         "refs/heads/main"
       ],
       "events": [
-        "workflow_run",
+        "push",
         "workflow_dispatch"
+      ],
+      "workflow_refs": [
+        "timkley/tim-kleyersburg.de/.github/workflows/ci.yml@refs/heads/main"
       ]
     },
     "timkley/tim-und-paula.love": {
