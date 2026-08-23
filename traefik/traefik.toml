@@ -1,5 +1,5 @@
 [core]
-  defaultRuleSyntax = "v2"
+  strictTLSOptions = true
 
 [entryPoints]
   [entryPoints.web]
@@ -14,17 +14,37 @@
       [entryPoints.websecure.transport.respondingTimeouts]
         readTimeout = "600s"
         idleTimeout = "600s"
+    [entryPoints.websecure.http]
+      underscoreHeadersStrategy = "delete"
     [entryPoints.websecure.http.tls]
       certResolver = "lets-encrypt"
 
+  [entryPoints.health]
+    address = ":8082"
+
 [api]
   dashboard = true
+
+[ping]
+  entryPoint = "health"
+
+[accessLog]
+  format = "json"
+  [accessLog.filters]
+    statusCodes = ["400-599"]
+    retryAttempts = true
+    minDuration = "100ms"
+  [accessLog.fields.headers]
+    defaultMode = "drop"
 
 [certificatesResolvers.lets-encrypt.acme]
   email = "timkley@gmail.com"
   storage = "/etc/traefik/acme.json"
   [certificatesResolvers.lets-encrypt.acme.dnsChallenge]
     provider = "cloudflare"
+    resolvers = ["1.1.1.1:53", "8.8.8.8:53"]
+    [certificatesResolvers.lets-encrypt.acme.dnsChallenge.propagation]
+      delayBeforeChecks = "10s"
 
 [providers.docker]
   watch = true
@@ -34,7 +54,3 @@
 [providers.file]
   directory = "/etc/traefik/dynamic/"
   watch = true
-
-[experimental.plugins.headerauthentication]
-  moduleName = "github.com/omar-shrbajy-arive/headerauthentication"
-  version = "v1.0.3"

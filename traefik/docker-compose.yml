@@ -1,6 +1,6 @@
 services:
   reverse-proxy:
-    image: traefik:v3.6
+    image: traefik:v3.7.11
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
@@ -17,6 +17,12 @@ services:
     environment:
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
     restart: always
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - web
 

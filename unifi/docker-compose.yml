@@ -36,10 +36,6 @@ services:
       - "10001:10001/udp" # AP discovery
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=web"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
-      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-https-redirect.redirectscheme.scheme=https"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}.middlewares=${COMPOSE_PROJECT_NAME}-https-redirect"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.entrypoints=websecure"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.rule=Host(`${COMPOSE_PROJECT_NAME}.timkley.dev`)"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.tls=true"
@@ -48,12 +44,8 @@ services:
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=8443"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.scheme=https"
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.serverstransport=insecureskipverify@file"
-      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-headers.headers.customrequestheaders.X-Forwarded-Proto=https"
-      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-headers.headers.customrequestheaders.X-Forwarded-Port=443"
-      - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-headers.headers.customrequestheaders.X-Real-IP={{ .RemoteAddr }}"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-headers"
       - "traefik.http.middlewares.${COMPOSE_PROJECT_NAME}-compress.compress=true"
-      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-headers,${COMPOSE_PROJECT_NAME}-compress"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.middlewares=${COMPOSE_PROJECT_NAME}-compress"
       # UniFi devices use /inform for controller communication. Route it to
       # port 8080 instead of the GUI/API service on port 8443.
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-inform.entrypoints=websecure"
