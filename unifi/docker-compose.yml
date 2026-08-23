@@ -27,13 +27,10 @@ services:
       JVM_INIT_HEAP_SIZE: "256M"
       JVM_MAX_HEAP_SIZE: "512M"
     ports:
-      - "3478:3478/udp" # STUN
-      - "6789:6789/tcp" # Speed test
-      - "8080:8080/tcp" # Device/ controller comm.
-      - "8443:8443/tcp" # Controller GUI/API as seen in a web browser
-      - "8880:8880/tcp" # HTTP portal redirection
-      - "8843:8843/tcp" # HTTPS portal redirection
-      - "10001:10001/udp" # AP discovery
+      # The adopted APs use the public IPv4 endpoints below. TCP 8080 is
+      # restricted to Cloudflare source networks by the firewall unit.
+      - "0.0.0.0:3478:3478/udp" # STUN
+      - "0.0.0.0:8080:8080/tcp" # Device/controller communication
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-secure.entrypoints=websecure"

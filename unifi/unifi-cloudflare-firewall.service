@@ -1,0 +1,14 @@
+[Unit]
+Description=Restrict UniFi inform traffic to Cloudflare source networks
+Requires=docker.service
+After=docker.service network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/admin/docker/unifi/apply-cloudflare-firewall.sh
+ExecReload=/home/admin/docker/unifi/apply-cloudflare-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
