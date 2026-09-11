@@ -60,6 +60,8 @@ async def main() -> None:
                 "paperless.search_documents",
                 "paperless.get_document",
                 "paperless.read_document",
+                "paperless.list_metadata",
+                "paperless.update_document",
                 "x.get_tweet",
                 "x.list_bookmarks",
                 "x.unbookmark_tweets",

@@ -33,9 +33,10 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_paperless_is_added_without_removing_existing_tools(self) -> None:
         mcp = build_mcp()
         names = {tool.name for tool in await mcp.list_tools()}
-        self.assertEqual(len(names), 29)
+        self.assertEqual(len(names), 31)
         self.assertTrue({
             "paperless.search_documents", "paperless.get_document", "paperless.read_document",
+            "paperless.list_metadata", "paperless.update_document",
             "google_health.log_meal", "homeassistant.request", "elevenlabs.speech_to_text",
             "x.list_bookmarks", "tandoor.request", "freshrss.request", "openbao_status",
         }.issubset(names))
@@ -43,12 +44,14 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
         status = await status_tool.fn(None)
         self.assertEqual(status["source"], "private")
         self.assertIn("paperless.search_documents", status["capabilities"])
+        self.assertFalse(status["capabilities"]["paperless.update_document"]["read_only"])
 
     async def test_private_registration_uses_only_the_private_openbao_secret(self) -> None:
         expected = {"url": "https://private.example.invalid", "api_token": "secret-value"}
         with patch("heisenberg_access_mcp.server.register_paperless_tools") as register:
             build_mcp()
         self.assertEqual(register.call_args.kwargs["source"], "private")
+        self.assertIs(register.call_args.kwargs["allow_updates"], True)
         self.assertEqual(register.call_args.kwargs["expected_base_url"], PAPERLESS_BASE_URL)
         self.assertEqual(PAPERLESS_BASE_URL, "https://paperless.timkley.dev")
         loader = register.call_args.kwargs["load_credentials"]
@@ -115,6 +118,48 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
             result = await tool.fn(document_ref="private:123")
         self.assertEqual(result, {"ok": False, "source": "private", "error": "paperless_instance_mismatch"})
         factory.assert_not_called()
+
+    async def test_private_update_requires_intent_and_verifies_the_persisted_change(self) -> None:
+        stored = {"id": 123, "title": "Before", "content": "Must stay out of metadata"}
+        methods: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(str(request.url), f"{PAPERLESS_BASE_URL}/api/documents/123/")
+            self.assertEqual(request.headers["authorization"], "Token private-api-test-token")
+            methods.append(request.method)
+            if request.method == "PATCH":
+                self.assertEqual(json.loads(request.content), {"title": "After"})
+                stored["title"] = "After"
+            return httpx.Response(200, json=stored.copy())
+
+        def register(mcp, **kwargs):
+            register_paperless_tools(mcp, **kwargs, client_factory=lambda **options: httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), **options
+            ))
+
+        with patch("heisenberg_access_mcp.server.register_paperless_tools", side_effect=register):
+            mcp = build_mcp()
+        tool = mcp._tool_manager.get_tool("paperless.update_document")
+        with patch.object(OpenBaoKV2, "read", new=AsyncMock(return_value={
+            "url": PAPERLESS_BASE_URL, "api_token": "private-api-test-token",
+        })) as read:
+            refused = await tool.fn(document_ref="private:123", changes={"title": "After"})
+            self.assertEqual(refused["error"], "paperless_update_confirmation_required")
+            read.assert_not_awaited()
+            preview = await tool.fn(document_ref="private:123", changes={"title": "After"}, dry_run=True)
+            self.assertTrue(preview["dry_run"])
+            self.assertEqual(methods, ["GET"])
+            self.assertEqual(stored["title"], "Before")
+            methods.clear()
+            result = await tool.fn(document_ref="private:123", changes={"title": "After"}, confirm=True)
+        self.assertEqual(methods, ["GET", "PATCH", "GET"])
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["ref"], "private:123")
+        self.assertEqual(result["before"], {"title": "Before"})
+        self.assertEqual(result["after"], {"title": "After"})
+        self.assertNotIn("content", result)
+        self.assertNotIn("Must stay out", json.dumps(result))
 
 
 if __name__ == "__main__":
