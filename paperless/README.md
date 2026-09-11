@@ -19,9 +19,7 @@ server's `.env`; changing it invalidates existing signed sessions and tokens.
 
 Upgraded from `2.20.15` using the official
 [v3 migration guide](https://github.com/paperless-ngx/paperless-ngx/blob/v3.1.3/docs/migration-v3.md).
-The stopped-stack Restic snapshot is
-`6697af8f00a8beb8657d31bb216c43d35cd43ba94f6c13ba7292149fc3a5b50d`, tagged
-`paperless` and `pre-v3.1.3`. It contains data, media, export, consume, and a
+A stopped-stack Restic backup covered data, media, export, consume, and a
 protected copy of the previous Compose file, environment and Redis dump.
 
 The database restore test was byte-identical and passed SQLite integrity checks.
@@ -35,9 +33,10 @@ The public login page rendered, and unauthenticated API access returned 401.
 An atomic duplicate import exercised the consumer and worker: Paperless removed
 the test copy and kept the document count at 631. Its duplicate rejection is the
 one expected error-level log entry from the verification.
-Audit scripts, before/after hashes and the database restore test remain in
-`/home/admin/paperless-upgrade-20260911-3.1.3` on Lando (directory mode 0700).
+After successful verification, the two temporary upgrade snapshots and the
+server-side backup and audit directory were removed at the user's request.
+All 14 regular Paperless snapshots and all other service snapshots remained
+unchanged; the daily backup timer remains enabled.
 
-For a rollback, stop Paperless and restore the matching v2 database, data,
-media, configuration and Redis state from the pre-upgrade snapshot before
-starting `2.20.15`. Do not start v2 against the migrated v3 database.
+For future restores, use the regular Restic backups and match the application
+version to the database version. Do not start v2 against a migrated v3 database.
