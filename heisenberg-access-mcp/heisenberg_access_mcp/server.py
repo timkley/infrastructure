@@ -18,7 +18,12 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 import uvicorn
-from .paperless import PAPERLESS_CAPABILITIES, PaperlessError, register_paperless_tools
+from .paperless import (
+    PAPERLESS_CAPABILITIES,
+    PAPERLESS_UPDATE_CAPABILITIES,
+    PaperlessError,
+    register_paperless_tools,
+)
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
@@ -3946,7 +3951,7 @@ def build_mcp() -> FastMCP:
             "source": "private",
             "ok": True,
             "openbao": openbao_target_summary(openbao_addr),
-            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES},
+            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES, **PAPERLESS_UPDATE_CAPABILITIES},
         }
 
     @mcp.tool()
@@ -5025,6 +5030,7 @@ def build_mcp() -> FastMCP:
         source="private",
         expected_base_url=PAPERLESS_BASE_URL,
         load_credentials=load_paperless_credentials,
+        allow_updates=True,
     )
 
     return mcp

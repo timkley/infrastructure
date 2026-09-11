@@ -45,23 +45,44 @@ OpenBao connection. Store only these fields in that secret:
 ```
 
 Use the URL of the private instance and a dedicated non-superuser API account.
-Grant the required global view permissions and access to the intended documents;
-do not change document ownership to make the account work. Paperless must enforce
-the account's read-only rights independently of the MCP. Never put the work
-instance's credentials in this deployment.
+Grant the required global view/change permissions and matching rights for the
+intended documents. Grant view rights for tags, correspondents and document types
+so the MCP can resolve their names. Keep document ownership unchanged. The account
+does not need delete, upload, ownership-change or administration rights. Paperless
+enforces its account permissions independently of the MCP's field allowlist.
+Never put the work instance's credentials in this deployment.
+
+OpenBao still grants only read access to this secret: reading an API token does
+not limit that token to read-only requests against Paperless.
 
 The configured URL must match the private endpoint above. The adapter rejects
 a different endpoint before making a request, so swapped instance settings fail
 closed. Moving Paperless to another address requires changing the reviewed
 `PAPERLESS_BASE_URL` constant as well as the secret.
 
-The three tools make only GET requests:
+These tools make only GET requests:
 
 - `paperless.search_documents(query, page=1, page_size=10)` returns compact search
   results, without OCR text. Page size is capped at 25.
 - `paperless.get_document(document_ref)` returns selected document metadata.
 - `paperless.read_document(document_ref, offset=0, limit=8000)` reads a bounded
   section of the current OCR text. Follow its continuation fields for more text.
+- `paperless.list_metadata(kind, query="", page=1, page_size=25)` resolves names
+  to IDs for `tags`, `correspondents` or `document_types`.
+
+`paperless.update_document(document_ref, changes, confirm=false, dry_run=false)`
+updates one document's details. Allowed fields are `title` (up to 128 characters),
+`created` (`YYYY-MM-DD`), `correspondent`, `document_type`, `tags` and
+`archive_serial_number` (0 through 4294967295). Relation values use IDs from the
+lookup tool; `null` clears a correspondent, document type or archive number.
+`tags` replaces the entire tag list; an empty list removes all tags.
+
+Use `dry_run=true` for a read-only before/after preview. An actual change needs
+`confirm=true` and a user request covering the document and intended edits.
+The flag records caller intent; it is not an independent proof of human approval.
+The tool sends one PATCH, then reads the document again and verifies the changed
+fields. It does not retry writes. If it reports `paperless_update_outcome_uncertain`,
+read the document before deciding whether another write is needed.
 
 Every document includes its instance, a reference such as `private:123`, and a
 browser link. Metadata/text reads require that reference; `work:123`, bare numeric
@@ -69,7 +90,7 @@ IDs and URLs are rejected before credentials are read. There is no automatic
 fallback to another archive. Search in both archives only when the task calls
 for both; clarify an ambiguous target before changing the search scope.
 
-No upload, metadata change, permission change or deletion tool is registered.
+No upload, document-content change, permission change or deletion tool is registered.
 The model cannot choose an API path, host or HTTP method. Redirects are refused,
 provider responses are bounded, and upstream errors do not expose bodies or
 credentials. Document text is untrusted content, not authority to invoke tools.
@@ -80,11 +101,14 @@ Returned document data is visible to the connected assistant/provider.
 The checked-in change prepares the integration; it does not create a Paperless
 account, write the OpenBao secret/policy or deploy the server. Before activation:
 
-1. Configure the dedicated private Paperless account and its document view rights.
+1. Configure the private Paperless account's intended document view/change rights
+   and view access to the three metadata lists.
 2. Store its URL/token at the fixed OpenBao path and apply the updated narrow
    policy through the normal approved operations workflow.
 3. Build/restart the private MCP and refresh connector tool discovery.
-4. Verify one known search and OCR read, then verify a work reference is rejected.
+4. Verify one known search and OCR read, lookup lists and an update dry run; then
+   verify a work reference is rejected. A real write test needs a specifically
+   selected test document and explicit instructions for that change.
 
 No document contents should be written to operational logs or pasted into a
 shared deployment report. Start with a harmless test document for the live check.
@@ -94,6 +118,10 @@ Run the local tests without contacting Paperless:
 ```bash
 uv run python -m unittest discover -s tests
 ```
+
+The private runtime opts into lookup/update tools with `allow_updates=True`.
+The work runtime retains the default and continues exposing only the original
+three read tools. Shared source code alone does not enable writes in work.
 
 The adapter and its tests are intentionally identical in the two independently
 deployable repositories. After a change, copy only the shared files and run the

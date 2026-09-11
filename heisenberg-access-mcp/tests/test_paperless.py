@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 
 import httpx
 
-from heisenberg_access_mcp.paperless import register_paperless_tools
+from heisenberg_access_mcp.paperless import PaperlessError, register_paperless_tools
 
 
 class FakeMCP:
@@ -53,13 +53,19 @@ class PaperlessToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.load_credentials = load_credentials
 
-    def register(self, handler: Callable[[httpx.Request], Awaitable[httpx.Response]]) -> None:
+    def register(
+        self,
+        handler: Callable[[httpx.Request], Awaitable[httpx.Response]],
+        *,
+        allow_updates: bool = False,
+    ) -> None:
         transport = httpx.MockTransport(handler)
         register_paperless_tools(
             self.mcp,
             source="private",
             load_credentials=self.load_credentials,
             expected_base_url=self.expected_base_url,
+            allow_updates=allow_updates,
             client_factory=lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs),
         )
 
@@ -80,6 +86,204 @@ class PaperlessToolsTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(annotations.readOnlyHint)
             self.assertFalse(annotations.destructiveHint)
             self.assertTrue(annotations.openWorldHint)
+
+    async def test_update_tool_registers_only_when_explicitly_enabled(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=document(), request=request)
+
+        self.register(handler, allow_updates=True)
+        self.assertEqual(set(self.mcp.tools), {
+            "paperless.search_documents",
+            "paperless.get_document",
+            "paperless.read_document",
+            "paperless.list_metadata",
+            "paperless.update_document",
+        })
+        _, annotations = self.mcp.tools["paperless.update_document"]
+        self.assertFalse(annotations.readOnlyHint)
+        self.assertTrue(annotations.destructiveHint)
+
+    async def test_allow_updates_requires_a_real_boolean_before_registration(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.fail("request must not run")
+
+        transport = httpx.MockTransport(handler)
+        for invalid_value in ("false", 1):
+            with self.subTest(allow_updates=invalid_value):
+                with self.assertRaisesRegex(PaperlessError, "paperless_allow_updates_invalid"):
+                    register_paperless_tools(
+                        self.mcp,
+                        source="private",
+                        load_credentials=self.load_credentials,
+                        expected_base_url=self.expected_base_url,
+                        allow_updates=invalid_value,  # type: ignore[arg-type]
+                        client_factory=lambda **kwargs: httpx.AsyncClient(transport=transport, **kwargs),
+                    )
+        self.assertEqual(self.mcp.tools, {})
+
+    async def test_list_metadata_uses_only_allowlisted_endpoint_and_compact_projection(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return httpx.Response(
+                200,
+                json={"count": 5, "results": [{"id": 7, "name": "Invoices", "colour": "#fff"}]},
+                request=request,
+            )
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.list_metadata")("tags", query="invoice", page=2, page_size=2)
+
+        self.assertEqual(
+            str(self.requests[0].url),
+            "https://paperless.example/subpath/api/tags/?page=2&page_size=2&name__icontains=invoice",
+        )
+        self.assertEqual(result["items"], [{"id": 7, "name": "Invoices"}])
+        self.assertEqual(result["next_page"], 3)
+        self.assertNotIn("colour", json.dumps(result))
+
+    async def test_list_metadata_rejects_unknown_kind_without_credentials(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.fail("request must not run")
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.list_metadata")("owners")
+        self.assertEqual(result["error"], "paperless_metadata_kind_invalid")
+        self.assertEqual(self.credentials_calls, 0)
+
+    async def test_update_rejects_invalid_or_unconfirmed_input_before_credentials(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.fail("request must not run")
+
+        self.register(handler, allow_updates=True)
+        update = self.tool("paperless.update_document")
+        for document_ref, changes, confirm, expected in (
+            ("work:123", {"title": "New"}, False, "paperless_document_ref_invalid"),
+            ("private:123", {"content": "forbidden"}, False, "paperless_update_changes_invalid"),
+            ("private:123", {}, False, "paperless_update_changes_invalid"),
+            ("private:123", {"tags": [1, 1]}, False, "paperless_update_changes_invalid"),
+            ("private:123", {"created": "2026-02-30"}, False, "paperless_update_changes_invalid"),
+            ("private:123", {"title": "x" * 129}, False, "paperless_update_changes_invalid"),
+            ("private:123", {"title": "New"}, False, "paperless_update_confirmation_required"),
+        ):
+            with self.subTest(document_ref=document_ref, changes=changes):
+                result = await update(document_ref, changes, confirm=confirm)
+                self.assertEqual(result["error"], expected)
+        self.assertEqual(self.credentials_calls, 0)
+
+    async def test_update_dry_run_reads_once_without_patch_and_excludes_content(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return httpx.Response(200, json=document(), request=request)
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.update_document")(
+            "private:123",
+            {"title": "Corrected", "created": "2026-09-10", "archive_serial_number": 0},
+            dry_run=True,
+        )
+
+        self.assertEqual([request.method for request in self.requests], ["GET"])
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["dry_run"])
+        self.assertFalse(result["verified"])
+        self.assertEqual(result["before"]["created"], "2026-09-01")
+        self.assertEqual(result["after"]["archive_serial_number"], 0)
+        self.assertNotIn("content", result)
+        self.assertNotIn("custom_fields", result)
+
+    async def test_update_patches_exact_allowlist_and_verifies_readback(self) -> None:
+        updated = document(
+            title="Corrected",
+            created="2026-09-10T00:00:00Z",
+            correspondent=None,
+            document_type=3,
+            tags=[2, 5],
+            archive_serial_number=0,
+        )
+        reads = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal reads
+            self.requests.append(request)
+            if request.method == "PATCH":
+                return httpx.Response(200, json={"id": 123}, request=request)
+            reads += 1
+            return httpx.Response(200, json=document() if reads == 1 else updated, request=request)
+
+        self.register(handler, allow_updates=True)
+        changes = {
+            "title": "Corrected",
+            "created": "2026-09-10",
+            "correspondent": None,
+            "document_type": 3,
+            "tags": [5, 2],
+            "archive_serial_number": 0,
+        }
+        result = await self.tool("paperless.update_document")("private:123", changes, confirm=True)
+
+        self.assertEqual([request.method for request in self.requests], ["GET", "PATCH", "GET"])
+        patch_request = self.requests[1]
+        self.assertEqual(str(patch_request.url), "https://paperless.example/subpath/api/documents/123/")
+        self.assertEqual(patch_request.headers["Content-Type"], "application/json")
+        self.assertEqual(json.loads(patch_request.content), {**changes, "tags": [2, 5]})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["changed_fields"], list(changes))
+        self.assertEqual(result["after"], {**changes, "tags": [2, 5]})
+        self.assertNotIn("content", result)
+        self.assertNotIn("owner", result)
+
+    async def test_update_mismatched_readback_is_uncertain_and_does_not_retry(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if request.method == "PATCH":
+                return httpx.Response(200, json={"id": 123}, request=request)
+            return httpx.Response(200, json=document(), request=request)
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.update_document")("private:123", {"title": "Corrected"}, confirm=True)
+
+        self.assertEqual(result["error"], "paperless_update_outcome_uncertain")
+        self.assertIn("Read the current document state before retrying", result["description"])
+        self.assertEqual([request.method for request in self.requests], ["GET", "PATCH", "GET"])
+
+    async def test_update_wrong_initial_document_id_prevents_patch(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return httpx.Response(200, json=document(id=124), request=request)
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.update_document")("private:123", {"title": "Corrected"}, confirm=True)
+
+        self.assertEqual(result["error"], "paperless_response_invalid")
+        self.assertEqual([request.method for request in self.requests], ["GET"])
+
+    async def test_update_provider_rejection_is_definite_and_has_no_readback(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if request.method == "PATCH":
+                return httpx.Response(400, json={"title": ["rejected"]}, request=request)
+            return httpx.Response(200, json=document(), request=request)
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.update_document")("private:123", {"title": "Corrected"}, confirm=True)
+
+        self.assertEqual(result["error"], "paperless_update_rejected")
+        self.assertEqual([request.method for request in self.requests], ["GET", "PATCH"])
+
+    async def test_update_redirect_is_uncertain_without_following_it(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if request.method == "PATCH":
+                return httpx.Response(302, headers={"location": "https://redirected.example/"}, request=request)
+            return httpx.Response(200, json=document(), request=request)
+
+        self.register(handler, allow_updates=True)
+        result = await self.tool("paperless.update_document")("private:123", {"title": "Corrected"}, confirm=True)
+
+        self.assertEqual(result["error"], "paperless_update_outcome_uncertain")
+        self.assertEqual([request.method for request in self.requests], ["GET", "PATCH"])
+        self.assertTrue(all(request.url.host == "paperless.example" for request in self.requests))
 
     async def test_search_uses_fixed_get_endpoint_and_projects_metadata(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
