@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 import uvicorn
+from .paperless import PAPERLESS_CAPABILITIES, PaperlessError, register_paperless_tools
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
@@ -34,7 +35,9 @@ from starlette.routing import Mount, Route
 LOGGER = logging.getLogger("heisenberg_access_mcp")
 OPENBAO_HEALTH_STATUS_CODES = {200, 429, 472, 473, 501, 503}
 OPENBAO_SECRET_MOUNT = "secret"
+PAPERLESS_BASE_URL = "https://paperless.timkley.dev"
 OPENBAO_ALLOWED_SECRETS = {
+    "paperless": "heisenberg/paperless",
     "homeassistant": "heisenberg/homeassistant",
     "freshrss": "heisenberg/freshrss",
     "tandoor": "heisenberg/tandoor",
@@ -748,6 +751,8 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
 
 def configure_logging() -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def emit_event(event: str, **payload: Any) -> None:
@@ -1613,8 +1618,9 @@ def transport_security_settings(resource_url: str) -> TransportSecuritySettings:
 
 
 class StaticBearerTokenVerifier(TokenVerifier):
-    def __init__(self, expected_token: str) -> None:
+    def __init__(self, expected_token: str, resource_url: str) -> None:
         self._expected_token = expected_token
+        self._resource_url = resource_url
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not hmac.compare_digest(token, self._expected_token):
@@ -1624,6 +1630,7 @@ class StaticBearerTokenVerifier(TokenVerifier):
             token="accepted-static-token",
             client_id="heisenberg-access-mcp-env-token",
             scopes=["mcp:call"],
+            resource=self._resource_url,
         )
 
 
@@ -3921,11 +3928,12 @@ def build_mcp() -> FastMCP:
         host=os.environ.get("HEISENBERG_ACCESS_MCP_HOST", "0.0.0.0"),
         port=int(os.environ.get("HEISENBERG_ACCESS_MCP_PORT", "8000")),
         stateless_http=True,
-        token_verifier=StaticBearerTokenVerifier(token),
+        token_verifier=StaticBearerTokenVerifier(token, resource_url),
         auth=AuthSettings(
             issuer_url=resource_url,
             resource_server_url=resource_url,
             required_scopes=["mcp:call"],
+            validate_token_resource=True,
         ),
         transport_security=transport_security_settings(resource_url),
     )
@@ -3935,9 +3943,10 @@ def build_mcp() -> FastMCP:
         emit_event("mcp_tool_call", tool="access_status", client_id="heisenberg-access-mcp-env-token")
         return {
             "service": "heisenberg-access-mcp",
+            "source": "private",
             "ok": True,
             "openbao": openbao_target_summary(openbao_addr),
-            "capabilities": CAPABILITIES,
+            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES},
         }
 
     @mcp.tool()
@@ -5002,6 +5011,21 @@ def build_mcp() -> FastMCP:
         except httpx.HTTPError as error:
             emit_event("capability_error", tool="elevenlabs.speech_to_text", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
+
+    async def load_paperless_credentials() -> dict[str, Any]:
+        try:
+            return await openbao.read("paperless")
+        except OpenBaoError as error:
+            raise PaperlessError(error.code) from None
+        except httpx.HTTPError:
+            raise PaperlessError("paperless_credentials_unavailable") from None
+
+    register_paperless_tools(
+        mcp,
+        source="private",
+        expected_base_url=PAPERLESS_BASE_URL,
+        load_credentials=load_paperless_credentials,
+    )
 
     return mcp
 

@@ -57,6 +57,9 @@ async def main() -> None:
             expected = {
                 "access_status",
                 "openbao_status",
+                "paperless.search_documents",
+                "paperless.get_document",
+                "paperless.read_document",
                 "x.get_tweet",
                 "x.list_bookmarks",
                 "x.unbookmark_tweets",

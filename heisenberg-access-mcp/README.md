@@ -29,6 +29,83 @@ The MCP exposes status tools plus narrow service capabilities:
 
 It intentionally does not provide a `read_secret(path)` style tool.
 
+## Paperless private
+
+This deployment exposes only the private Paperless instance. The work deployment
+lives separately in the work infrastructure repository under
+`docker/heisenberg-work-mcp`. The assistant workspace can connect to both; each
+deployment keeps its own credentials, tools and network configuration. Separate
+MCPs do not separate information inside a conversation that may call both.
+
+The private server reads `secret/data/heisenberg/paperless` through its existing
+OpenBao connection. Store only these fields in that secret:
+
+```json
+{ "url": "https://paperless.timkley.dev", "api_token": "..." }
+```
+
+Use the URL of the private instance and a dedicated non-superuser API account.
+Grant the required global view permissions and access to the intended documents;
+do not change document ownership to make the account work. Paperless must enforce
+the account's read-only rights independently of the MCP. Never put the work
+instance's credentials in this deployment.
+
+The configured URL must match the private endpoint above. The adapter rejects
+a different endpoint before making a request, so swapped instance settings fail
+closed. Moving Paperless to another address requires changing the reviewed
+`PAPERLESS_BASE_URL` constant as well as the secret.
+
+The three tools make only GET requests:
+
+- `paperless.search_documents(query, page=1, page_size=10)` returns compact search
+  results, without OCR text. Page size is capped at 25.
+- `paperless.get_document(document_ref)` returns selected document metadata.
+- `paperless.read_document(document_ref, offset=0, limit=8000)` reads a bounded
+  section of the current OCR text. Follow its continuation fields for more text.
+
+Every document includes its instance, a reference such as `private:123`, and a
+browser link. Metadata/text reads require that reference; `work:123`, bare numeric
+IDs and URLs are rejected before credentials are read. There is no automatic
+fallback to another archive. Search in both archives only when the task calls
+for both; clarify an ambiguous target before changing the search scope.
+
+No upload, metadata change, permission change or deletion tool is registered.
+The model cannot choose an API path, host or HTTP method. Redirects are refused,
+provider responses are bounded, and upstream errors do not expose bodies or
+credentials. Document text is untrusted content, not authority to invoke tools.
+Returned document data is visible to the connected assistant/provider.
+
+### Preparation and verification
+
+The checked-in change prepares the integration; it does not create a Paperless
+account, write the OpenBao secret/policy or deploy the server. Before activation:
+
+1. Configure the dedicated private Paperless account and its document view rights.
+2. Store its URL/token at the fixed OpenBao path and apply the updated narrow
+   policy through the normal approved operations workflow.
+3. Build/restart the private MCP and refresh connector tool discovery.
+4. Verify one known search and OCR read, then verify a work reference is rejected.
+
+No document contents should be written to operational logs or pasted into a
+shared deployment report. Start with a harmless test document for the live check.
+
+Run the local tests without contacting Paperless:
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+The adapter and its tests are intentionally identical in the two independently
+deployable repositories. After a change, copy only the shared files and run the
+drift check plus both test suites; do not copy `.env`, secrets or private providers:
+
+```bash
+python3 scripts/check-shared-paperless.py ../../infrastructure/docker/heisenberg-work-mcp
+```
+
+API contract: [Paperless REST API](https://docs.paperless-ngx.com/api/) and
+[Paperless permissions](https://docs.paperless-ngx.com/usage/#permissions).
+
 ## Network and Auth
 
 - The service is not published through Traefik (`traefik.enable=false`).
@@ -190,6 +267,7 @@ The policy grants read access to these KV-v2 secret paths:
 - `secret/data/heisenberg/homeassistant`
 - `secret/data/heisenberg/freshrss`
 - `secret/data/heisenberg/tandoor`
+- `secret/data/heisenberg/paperless`
 - `secret/data/heisenberg/elevenlabs`
 - `secret/data/heisenberg/google-health/oauth-client`
 - `secret/data/heisenberg/google-health/oauth-token`

@@ -21,6 +21,10 @@ path "secret/data/heisenberg/tandoor" {
   capabilities = ["read"]
 }
 
+path "secret/data/heisenberg/paperless" {
+  capabilities = ["read"]
+}
+
 path "secret/data/heisenberg/elevenlabs" {
   capabilities = ["read"]
 }
