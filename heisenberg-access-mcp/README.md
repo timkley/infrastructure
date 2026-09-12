@@ -48,7 +48,8 @@ Use the URL of the private instance and a dedicated non-superuser API account.
 Grant the required global view/change permissions and matching rights for the
 intended documents. Grant view rights for tags, correspondents and document types
 so the MCP can resolve their names. Keep document ownership unchanged. The account
-does not need delete, upload, ownership-change or administration rights. Paperless
+needs `delete_document` and `add_correspondent` for the two explicit write tools,
+but no upload, ownership-change or administration rights. Paperless
 enforces its account permissions independently of the MCP's field allowlist.
 Never put the work instance's credentials in this deployment.
 
@@ -84,13 +85,29 @@ The tool sends one PATCH, then reads the document again and verifies the changed
 fields. It does not retry writes. If it reports `paperless_update_outcome_uncertain`,
 read the document before deciding whether another write is needed.
 
+`paperless.delete_document(document_ref, confirm=false, dry_run=false)` moves
+one document to the Paperless trash via its normal DELETE endpoint. It requires
+`confirm=true`; `dry_run=true` reads a preview only. A successful write requires
+HTTP 204 and a subsequent HTTP 404 on the active document endpoint. The result
+reports that absence and states that trash membership itself was not verified:
+Paperless can hide foreign-owned trash records from non-superuser accounts.
+Restoration remains possible until Paperless permanently empties that entry.
+The MCP has no permanent deletion or trash-emptying endpoint.
+
+`paperless.create_correspondent(name, confirm=false, dry_run=false)` accepts a
+name of at most 128 characters. It first checks for existing names without
+regard to letter case. An exact match is reused; ambiguous or differently
+capitalized matches stop without writing. Otherwise it previews the creation or,
+with `confirm=true`, POSTs only the name and checks the returned ID/name through
+a GET readback. It never retries an unclear write automatically.
+
 Every document includes its instance, a reference such as `private:123`, and a
 browser link. Metadata/text reads require that reference; `work:123`, bare numeric
 IDs and URLs are rejected before credentials are read. There is no automatic
 fallback to another archive. Search in both archives only when the task calls
 for both; clarify an ambiguous target before changing the search scope.
 
-No upload, document-content change, permission change or deletion tool is registered.
+No upload, document-content change, permission change or permanent-deletion tool is registered.
 The model cannot choose an API path, host or HTTP method. Redirects are refused,
 provider responses are bounded, and upstream errors do not expose bodies or
 credentials. Document text is untrusted content, not authority to invoke tools.
@@ -98,16 +115,16 @@ Returned document data is visible to the connected assistant/provider.
 
 ### Preparation and verification
 
-The checked-in change prepares the integration; it does not create a Paperless
-account, write the OpenBao secret/policy or deploy the server. Before activation:
+For a new installation, provision the account and secret separately from the
+MCP code, then validate the deployment:
 
-1. Configure the private Paperless account's intended document view/change rights
-   and view access to the three metadata lists.
+1. Configure the private Paperless account's intended document view/change/delete
+   rights, correspondent creation, and view access to the three metadata lists.
 2. Store its URL/token at the fixed OpenBao path and apply the updated narrow
    policy through the normal approved operations workflow.
 3. Build/restart the private MCP and refresh connector tool discovery.
-4. Verify one known search and OCR read, lookup lists and an update dry run; then
-   verify a work reference is rejected. A real write test needs a specifically
+4. Verify search and OCR reads, lookup lists and all three write dry runs; then
+   verify a work reference and missing confirmations are rejected. A real write test needs a specifically
    selected test document and explicit instructions for that change.
 
 No document contents should be written to operational logs or pasted into a
@@ -119,9 +136,10 @@ Run the local tests without contacting Paperless:
 uv run python -m unittest discover -s tests
 ```
 
-The private runtime opts into lookup/update tools with `allow_updates=True`.
-The work runtime retains the default and continues exposing only the original
-three read tools. Shared source code alone does not enable writes in work.
+Both runtimes expose the same seven Paperless tools. The source, expected URL,
+OpenBao loader and bearer stay fixed separately in each server. Both register
+the shared lookup/update adapter and the shared additional-write adapter; users
+cannot choose the source, host or HTTP method in a tool call.
 
 The adapter and its tests are intentionally identical in the two independently
 deployable repositories. After a change, copy only the shared files and run the
@@ -131,8 +149,40 @@ drift check plus both test suites; do not copy `.env`, secrets or private provid
 python3 scripts/check-shared-paperless.py ../../infrastructure/docker/heisenberg-work-mcp
 ```
 
+Run the reproducible live check inside the private MCP container. It makes
+only provider reads and dry runs and prints no document contents or secrets:
+
+```bash
+docker exec -i heisenberg-access-mcp-app python - --source private < scripts/smoke-paperless-parity.py
+```
+
 API contract: [Paperless REST API](https://docs.paperless-ngx.com/api/) and
 [Paperless permissions](https://docs.paperless-ngx.com/usage/#permissions).
+
+### Live-Abgleich am 12. September 2026
+
+Privat und Work stellen dieselben sieben Paperless-Tools bereit, einschließlich
+`paperless.delete_document` und `paperless.create_correspondent`. Die private
+Installation umfasst insgesamt 33 Tools; die übrigen privaten Anbieter bleiben
+vorhanden. Das ChatGPT-Plugin „Heisenberg Lando“ wurde aktualisiert und zeigt die
+beiden neuen Aktionen. Ein Aufruf über den OpenAI-Tunnel bestätigt den gleichen
+Paperless-Funktionsumfang wie Work.
+
+Beide Adapter, beide gemeinsamen Testdateien und das Vergleichsskript sind
+bytegleich (5/5). Lokale Tests: Privat 80/80, Work 60/60. Live bestanden in beiden
+Instanzen: Suche, Details, OCR, Metadaten, alle drei Schreibvorschauen,
+Bestätigungspflicht, Ablehnung fremder Instanzreferenzen und Bearer-Prüfung.
+Dokument und Korrespondentenzahl blieben bei den Tests gleich; es erfolgte kein
+Paperless-Schreibaufruf. Beide MCP-Container sind gesund.
+
+Das vorhandene private Tokenkonto hatte bereits `delete_document` und
+`add_correspondent` sowie Löschzugriff auf alle für dieses Konto sichtbaren
+Dokumente. Zugangsdaten, Gruppen, Eigentümer und Rechte wurden nicht geändert.
+Private und berufliche OpenBao-Pfade bleiben getrennt.
+
+Rollback-Image auf Lando: `heisenberg-access-mcp:before-parity-20260912`.
+Die zuvor geänderten Dateien und die Liste neuer Dateien liegen unter
+`/home/admin/.cache/heisenberg-mcp-deploy/private-before-parity-20260912/`.
 
 ## Network and Auth
 

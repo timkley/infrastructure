@@ -24,6 +24,10 @@ from .paperless import (
     PaperlessError,
     register_paperless_tools,
 )
+from .paperless_writes import (
+    PAPERLESS_WRITE_CAPABILITIES,
+    register_paperless_write_tools,
+)
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
@@ -3951,7 +3955,7 @@ def build_mcp() -> FastMCP:
             "source": "private",
             "ok": True,
             "openbao": openbao_target_summary(openbao_addr),
-            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES, **PAPERLESS_UPDATE_CAPABILITIES},
+            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES, **PAPERLESS_UPDATE_CAPABILITIES, **PAPERLESS_WRITE_CAPABILITIES},
         }
 
     @mcp.tool()
@@ -5031,6 +5035,12 @@ def build_mcp() -> FastMCP:
         expected_base_url=PAPERLESS_BASE_URL,
         load_credentials=load_paperless_credentials,
         allow_updates=True,
+    )
+    register_paperless_write_tools(
+        mcp,
+        source="private",
+        expected_base_url=PAPERLESS_BASE_URL,
+        load_credentials=load_paperless_credentials,
     )
 
     return mcp

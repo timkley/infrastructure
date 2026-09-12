@@ -33,10 +33,11 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_paperless_is_added_without_removing_existing_tools(self) -> None:
         mcp = build_mcp()
         names = {tool.name for tool in await mcp.list_tools()}
-        self.assertEqual(len(names), 31)
+        self.assertEqual(len(names), 33)
         self.assertTrue({
             "paperless.search_documents", "paperless.get_document", "paperless.read_document",
             "paperless.list_metadata", "paperless.update_document",
+            "paperless.delete_document", "paperless.create_correspondent",
             "google_health.log_meal", "homeassistant.request", "elevenlabs.speech_to_text",
             "x.list_bookmarks", "tandoor.request", "freshrss.request", "openbao_status",
         }.issubset(names))
@@ -45,16 +46,22 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["source"], "private")
         self.assertIn("paperless.search_documents", status["capabilities"])
         self.assertFalse(status["capabilities"]["paperless.update_document"]["read_only"])
+        self.assertFalse(status["capabilities"]["paperless.delete_document"]["read_only"])
+        self.assertFalse(status["capabilities"]["paperless.create_correspondent"]["read_only"])
 
     async def test_private_registration_uses_only_the_private_openbao_secret(self) -> None:
         expected = {"url": "https://private.example.invalid", "api_token": "secret-value"}
-        with patch("heisenberg_access_mcp.server.register_paperless_tools") as register:
+        with patch("heisenberg_access_mcp.server.register_paperless_tools") as register, patch(
+            "heisenberg_access_mcp.server.register_paperless_write_tools"
+        ) as write_register:
             build_mcp()
         self.assertEqual(register.call_args.kwargs["source"], "private")
         self.assertIs(register.call_args.kwargs["allow_updates"], True)
         self.assertEqual(register.call_args.kwargs["expected_base_url"], PAPERLESS_BASE_URL)
+        self.assertEqual(write_register.call_args.kwargs["source"], "private")
+        self.assertEqual(write_register.call_args.kwargs["expected_base_url"], PAPERLESS_BASE_URL)
         self.assertEqual(PAPERLESS_BASE_URL, "https://paperless.timkley.dev")
-        loader = register.call_args.kwargs["load_credentials"]
+        loader = write_register.call_args.kwargs["load_credentials"]
         with patch.object(OpenBaoKV2, "read", new=AsyncMock(return_value=expected)) as read:
             self.assertEqual(await loader(), expected)
         read.assert_awaited_once_with("paperless")
@@ -79,6 +86,17 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["source"], "private")
         self.assertNotIn("secret-value", json.dumps(result))
+        read.assert_not_awaited()
+
+    async def test_work_ref_is_rejected_by_private_delete_before_credentials(self) -> None:
+        mcp = build_mcp()
+        with patch.object(OpenBaoKV2, "read", new=AsyncMock()) as read:
+            tool = mcp._tool_manager.get_tool("paperless.delete_document")
+            result = await tool.fn(document_ref="work:123", confirm=True)
+        self.assertEqual(
+            result,
+            {"ok": False, "source": "private", "error": "paperless_document_ref_invalid"},
+        )
         read.assert_not_awaited()
 
     async def test_private_reads_use_fixed_host_and_reject_swapped_work_settings(self) -> None:
