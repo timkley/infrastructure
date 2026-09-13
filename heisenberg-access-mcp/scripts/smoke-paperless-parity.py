@@ -11,14 +11,15 @@ from mcp.client.streamable_http import streamable_http_client
 PAPERLESS_TOOLS = {
     'paperless.search_documents', 'paperless.get_document', 'paperless.read_document',
     'paperless.list_metadata', 'paperless.update_document', 'paperless.delete_document',
-    'paperless.create_correspondent',
+    'paperless.create_correspondent', 'paperless.create_document_type',
+    'paperless.bulk_set_document_type',
 }
 
 
 async def main(source):
     token_name, expected_count, wrong_source = {
-        'private': ('HEISENBERG_ACCESS_MCP_TOKEN', 33, 'work'),
-        'work': ('HEISENBERG_WORK_MCP_TOKEN', 8, 'private'),
+        'private': ('HEISENBERG_ACCESS_MCP_TOKEN', 35, 'work'),
+        'work': ('HEISENBERG_WORK_MCP_TOKEN', 10, 'private'),
     }[source]
     base = 'http://127.0.0.1:8000'
     report = {'source': source}
@@ -37,7 +38,7 @@ async def main(source):
                 assert set(paperless) == PAPERLESS_TOOLS
                 assert paperless['paperless.delete_document'].annotations.destructiveHint is True
                 assert paperless['paperless.create_correspondent'].annotations.destructiveHint is False
-                for name in ('paperless.update_document', 'paperless.delete_document', 'paperless.create_correspondent'):
+                for name in ('paperless.update_document', 'paperless.delete_document', 'paperless.create_correspondent', 'paperless.create_document_type', 'paperless.bulk_set_document_type'):
                     assert paperless[name].annotations.readOnlyHint is False
                 report['total_tools'] = len(tools)
                 report['paperless_tools'] = sorted(paperless)
@@ -64,6 +65,13 @@ async def main(source):
                 for kind in ('tags', 'correspondents', 'document_types'):
                     meta = await call('paperless.list_metadata', {'kind': kind, 'page_size': 1})
                     assert meta.get('ok')
+                    if kind == 'document_types':
+                        document_type_count = meta['count']
+                        assert meta['items'], 'An existing type is needed for the read-only bulk preview'
+                        existing_type = meta['items'][0]
+                        type_id = existing_type['id']
+                        type_duplicate = await call('paperless.create_document_type', {'name': existing_type['name'], 'dry_run': True})
+                        assert type_duplicate.get('ok') and type_duplicate['duplicate'] and not type_duplicate['created']
                     if kind == 'correspondents':
                         correspondent_count = meta['count']
                         if meta['items']:
@@ -75,10 +83,17 @@ async def main(source):
                 assert delete.get('ok') and delete['dry_run'] and delete['would_move_to_trash']
                 create = await call('paperless.create_correspondent', {'name': 'Heisenberg – nur Vorschau zur Tool-Parität', 'dry_run': True})
                 assert create.get('ok') and create['dry_run'] and create['would_create'] and not create['created']
+                type_create = await call('paperless.create_document_type', {'name': 'Heisenberg – nur Vorschau zur Tool-Parität', 'dry_run': True})
+                assert type_create.get('ok') and type_create['dry_run'] and type_create['would_create'] and not type_create['created']
+                bulk = await call('paperless.bulk_set_document_type', {'document_refs': [ref], 'document_type_id': type_id, 'dry_run': True})
+                assert bulk.get('ok') and bulk['dry_run']
                 for name, arguments, error in (
                     ('paperless.update_document', {'document_ref': ref, 'changes': {'title': before['title']}}, 'paperless_update_confirmation_required'),
                     ('paperless.delete_document', {'document_ref': ref}, 'paperless_delete_confirmation_required'),
                     ('paperless.create_correspondent', {'name': 'Preview'}, 'paperless_create_correspondent_confirmation_required'),
+                    ('paperless.create_document_type', {'name': 'Preview'}, 'paperless_create_document_type_confirmation_required'),
+                    ('paperless.bulk_set_document_type', {'document_refs': [ref], 'document_type_id': type_id}, 'paperless_bulk_set_document_type_confirmation_required'),
+                    ('paperless.bulk_set_document_type', {'document_refs': [wrong_source + ':1'], 'document_type_id': type_id, 'dry_run': True}, 'paperless_document_ref_invalid'),
                     ('paperless.delete_document', {'document_ref': wrong_source + ':1', 'dry_run': True}, 'paperless_document_ref_invalid'),
                     ('paperless.get_document', {'document_ref': wrong_source + ':1'}, 'paperless_document_ref_invalid'),
                 ):
@@ -88,7 +103,9 @@ async def main(source):
                 assert before == after
                 metadata_after = await call('paperless.list_metadata', {'kind': 'correspondents', 'page_size': 1})
                 assert metadata_after.get('ok') and metadata_after['count'] == correspondent_count
-                report.update(reads=True, previews=True, confirmations=True, source_boundary=True, document_unchanged=True, correspondent_count_unchanged=True, provider_write_calls=0)
+                types_after = await call('paperless.list_metadata', {'kind': 'document_types', 'page_size': 1})
+                assert types_after.get('ok') and types_after['count'] == document_type_count
+                report.update(reads=True, previews=True, confirmations=True, source_boundary=True, document_unchanged=True, correspondent_count_unchanged=True, document_type_count_unchanged=True, provider_write_calls=0)
     print(json.dumps(report, indent=2))
 
 

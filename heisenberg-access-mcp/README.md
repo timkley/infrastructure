@@ -48,7 +48,8 @@ Use the URL of the private instance and a dedicated non-superuser API account.
 Grant the required global view/change permissions and matching rights for the
 intended documents. Grant view rights for tags, correspondents and document types
 so the MCP can resolve their names. Keep document ownership unchanged. The account
-needs `delete_document` and `add_correspondent` for the two explicit write tools,
+needs `delete_document`, `add_correspondent`, and `add_documenttype` for the
+explicit write tools,
 but no upload, ownership-change or administration rights. Paperless
 enforces its account permissions independently of the MCP's field allowlist.
 Never put the work instance's credentials in this deployment.
@@ -101,6 +102,33 @@ capitalized matches stop without writing. Otherwise it previews the creation or,
 with `confirm=true`, POSTs only the name and checks the returned ID/name through
 a GET readback. It never retries an unclear write automatically.
 
+`paperless.create_document_type(name, confirm=false, dry_run=false)` accepts only
+a trimmed name of at most 128 characters. It reuses an existing unique name
+without regard to letter case. Ambiguous lookup results stop without creating
+anything. For a new type, it checks the API account's creation permission before
+previewing or sending a name-only POST. Success requires a GET readback of the
+saved ID and name. Paperless assigns the normal API owner; this tool accepts no
+ownership, matching, or permission options.
+
+`paperless.bulk_set_document_type(document_refs, document_type_id, confirm=false,
+dry_run=false)` sets one existing type on 1–25 explicit, distinct references from
+this instance. The target must be a positive ID; this tool cannot clear the type.
+It checks the target and all documents before writing. Dry run reports the
+current and planned type plus each document's change permission. Confirmed calls
+use the normal document PATCH API with only `document_type`, followed by a GET
+readback for each document. This preserves Paperless's audit logging (when
+enabled), search indexing, and document-update workflows. A type change may
+trigger configured actions such as forwarding an incoming invoice; approval must
+cover those effects. Live smoke checks never execute such a change.
+
+Results distinguish verified changes, already-correct documents, denied or
+rejected updates, uncertain outcomes, and documents not attempted. A timeout or
+unclear readback stops further writes. There are no automatic retries. Read
+uncertain documents first, then submit only the still-needed references under
+the same explicit user approval. The operation is not an atomic transaction;
+earlier verified changes remain if a later document fails. The MCP cannot lock
+out simultaneous edits made through other clients.
+
 Every document includes its instance, a reference such as `private:123`, and a
 browser link. Metadata/text reads require that reference; `work:123`, bare numeric
 IDs and URLs are rejected before credentials are read. There is no automatic
@@ -119,11 +147,11 @@ For a new installation, provision the account and secret separately from the
 MCP code, then validate the deployment:
 
 1. Configure the private Paperless account's intended document view/change/delete
-   rights, correspondent creation, and view access to the three metadata lists.
+   rights, correspondent and document-type creation, and view access to the three metadata lists.
 2. Store its URL/token at the fixed OpenBao path and apply the updated narrow
    policy through the normal approved operations workflow.
 3. Build/restart the private MCP and refresh connector tool discovery.
-4. Verify search and OCR reads, lookup lists and all three write dry runs; then
+4. Verify search and OCR reads, lookup lists and all five write dry runs; then
    verify a work reference and missing confirmations are rejected. A real write test needs a specifically
    selected test document and explicit instructions for that change.
 
@@ -136,7 +164,7 @@ Run the local tests without contacting Paperless:
 uv run python -m unittest discover -s tests
 ```
 
-Both runtimes expose the same seven Paperless tools. The source, expected URL,
+Both runtimes expose the same nine Paperless tools. The source, expected URL,
 OpenBao loader and bearer stay fixed separately in each server. Both register
 the shared lookup/update adapter and the shared additional-write adapter; users
 cannot choose the source, host or HTTP method in a tool call.

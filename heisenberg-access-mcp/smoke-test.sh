@@ -64,6 +64,8 @@ async def main() -> None:
                 "paperless.update_document",
                 "paperless.delete_document",
                 "paperless.create_correspondent",
+                "paperless.create_document_type",
+                "paperless.bulk_set_document_type",
                 "x.get_tweet",
                 "x.list_bookmarks",
                 "x.unbookmark_tweets",

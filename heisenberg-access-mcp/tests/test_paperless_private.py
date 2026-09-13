@@ -33,11 +33,12 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_paperless_is_added_without_removing_existing_tools(self) -> None:
         mcp = build_mcp()
         names = {tool.name for tool in await mcp.list_tools()}
-        self.assertEqual(len(names), 33)
+        self.assertEqual(len(names), 35)
         self.assertTrue({
             "paperless.search_documents", "paperless.get_document", "paperless.read_document",
             "paperless.list_metadata", "paperless.update_document",
             "paperless.delete_document", "paperless.create_correspondent",
+            "paperless.create_document_type", "paperless.bulk_set_document_type",
             "google_health.log_meal", "homeassistant.request", "elevenlabs.speech_to_text",
             "x.list_bookmarks", "tandoor.request", "freshrss.request", "openbao_status",
         }.issubset(names))
@@ -48,6 +49,8 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status["capabilities"]["paperless.update_document"]["read_only"])
         self.assertFalse(status["capabilities"]["paperless.delete_document"]["read_only"])
         self.assertFalse(status["capabilities"]["paperless.create_correspondent"]["read_only"])
+        self.assertFalse(status["capabilities"]["paperless.create_document_type"]["read_only"])
+        self.assertFalse(status["capabilities"]["paperless.bulk_set_document_type"]["read_only"])
 
     async def test_private_registration_uses_only_the_private_openbao_secret(self) -> None:
         expected = {"url": "https://private.example.invalid", "api_token": "secret-value"}

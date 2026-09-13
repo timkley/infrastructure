@@ -56,14 +56,20 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
     def correspondent(identifier: int = 8, name: str = "Acme GmbH") -> dict[str, object]:
         return {"id": identifier, "name": name}
 
-    async def test_registers_exactly_two_fixed_source_write_tools(self) -> None:
+    async def test_registers_exactly_four_fixed_source_write_tools(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
             self.fail(f"request must not run: {request.url}")
 
         self.register(handler)
-        self.assertEqual(set(self.mcp.tools), {"paperless.delete_document", "paperless.create_correspondent"})
+        self.assertEqual(set(self.mcp.tools), {
+            "paperless.delete_document",
+            "paperless.create_correspondent",
+            "paperless.create_document_type",
+            "paperless.bulk_set_document_type",
+        })
         self.assertTrue(self.mcp.annotations["paperless.delete_document"].destructiveHint)
         self.assertFalse(self.mcp.annotations["paperless.create_correspondent"].destructiveHint)
+        self.assertTrue(self.mcp.annotations["paperless.bulk_set_document_type"].destructiveHint)
         private_mcp = FakeMCP()
         register_paperless_write_tools(
             private_mcp, source="private", load_credentials=self.credentials,
@@ -101,12 +107,31 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
             {"ok": False, "source": "private", "error": "paperless_document_ref_invalid"},
         )
         self.assertEqual(credentials_calls, 0)
+        wrong_bulk_ref = await private_mcp.tools["paperless.bulk_set_document_type"](
+            ["work:123"], 4, confirm=True,
+        )
+        self.assertEqual(
+            wrong_bulk_ref,
+            {"ok": False, "source": "private", "error": "paperless_document_ref_invalid"},
+        )
+        self.assertEqual(credentials_calls, 0)
         swapped_host = await private_mcp.tools["paperless.delete_document"]("private:123", dry_run=True)
         self.assertEqual(
             swapped_host,
             {"ok": False, "source": "private", "error": "paperless_instance_mismatch"},
         )
         self.assertEqual(credentials_calls, 1)
+        for tool_name, arguments in (
+            ("paperless.create_document_type", {"name": "Invoice", "dry_run": True}),
+            ("paperless.bulk_set_document_type", {"document_refs": ["private:123"], "document_type_id": 4, "dry_run": True}),
+        ):
+            with self.subTest(tool_name=tool_name):
+                result = await private_mcp.tools[tool_name](**arguments)
+                self.assertEqual(
+                    result,
+                    {"ok": False, "source": "private", "error": "paperless_instance_mismatch"},
+                )
+        self.assertEqual(credentials_calls, 3)
 
     async def test_invalid_or_unconfirmed_inputs_make_no_http_request(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -119,6 +144,19 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
             ("paperless.create_correspondent", {"name": " "}, "paperless_correspondent_name_invalid"),
             ("paperless.create_correspondent", {"name": "x" * 129}, "paperless_correspondent_name_invalid"),
             ("paperless.create_correspondent", {"name": "Acme GmbH"}, "paperless_create_correspondent_confirmation_required"),
+            ("paperless.create_document_type", {"name": "Type"}, "paperless_create_document_type_confirmation_required"),
+            ("paperless.create_document_type", {"name": " "}, "paperless_document_type_name_invalid"),
+            ("paperless.create_document_type", {"name": "x" * 129}, "paperless_document_type_name_invalid"),
+            ("paperless.create_document_type", {"name": "Invoice", "dry_run": 1}, "paperless_dry_run_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123"], "document_type_id": 4}, "paperless_bulk_set_document_type_confirmation_required"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["private:123"], "document_type_id": 4, "confirm": True}, "paperless_document_ref_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123"], "document_type_id": True, "confirm": True}, "paperless_document_type_id_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": [], "document_type_id": 4, "confirm": True}, "paperless_bulk_document_refs_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123", "work:123"], "document_type_id": 4, "confirm": True}, "paperless_bulk_document_refs_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123"] * 26, "document_type_id": 4, "confirm": True}, "paperless_bulk_document_refs_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123"], "document_type_id": None, "confirm": True}, "paperless_document_type_id_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123"], "document_type_id": -1, "confirm": True}, "paperless_document_type_id_invalid"),
+            ("paperless.bulk_set_document_type", {"document_refs": ["work:123"], "document_type_id": 4, "confirm": True, "dry_run": 1}, "paperless_dry_run_invalid"),
         )
         for name, arguments, error in cases:
             with self.subTest(name=name, error=error):
@@ -315,6 +353,263 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
                 result = await self.tool("paperless.delete_document")("work:123", confirm=True)
                 self.assertEqual(result, {"ok": False, "source": "work", "error": error})
                 self.assertEqual([request.method for request in self.requests], methods)
+
+    @staticmethod
+    def change_document(identifier: int, document_type: int | None, can_change: object = True) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "title": f"Document {identifier}",
+            "document_type": document_type,
+            "user_can_change": can_change,
+        }
+
+    @staticmethod
+    def document_type(identifier: int = 4, name: str = "Invoice") -> dict[str, object]:
+        return {"id": identifier, "name": name}
+
+    async def test_create_document_type_dry_run_duplicate_and_permission_checks(self) -> None:
+        for responses, name, expected, methods in (
+            (
+                [(200, {"count": 0, "results": []}), (200, {"actions": {"POST": {}}})],
+                " Invoice ",
+                {"ok": True, "source": "work", "name": "Invoice", "created": False, "duplicate": False, "dry_run": True, "would_create": True, "verified": False},
+                ["GET", "OPTIONS"],
+            ),
+            (
+                [(200, {"count": 1, "results": [self.document_type(name="INVOICE")]})],
+                "Invoice",
+                {"ok": True, "source": "work", "id": 4, "name": "INVOICE", "created": False, "duplicate": True, "dry_run": False, "verified": True},
+                ["GET"],
+            ),
+            (
+                [(200, {"count": 0, "results": []}), (200, {"actions": {}})],
+                "Invoice",
+                {"ok": False, "source": "work", "error": "paperless_document_type_create_permission_denied"},
+                ["GET", "OPTIONS"],
+            ),
+        ):
+            with self.subTest(expected=expected):
+                self.requests = []
+                sequence = iter(responses)
+
+                async def handler(request: httpx.Request) -> httpx.Response:
+                    self.requests.append(request)
+                    status, payload = next(sequence)
+                    return httpx.Response(status, json=payload, request=request)
+
+                self.mcp = FakeMCP()
+                self.register(handler)
+                result = await self.tool("paperless.create_document_type")(name, confirm=True, dry_run=expected.get("dry_run", False))
+                self.assertEqual(result, expected)
+                self.assertEqual([request.method for request in self.requests], methods)
+                self.assertEqual(self.requests[0].url.params["name__iexact"], "Invoice")
+
+    async def test_create_document_type_posts_name_only_and_reads_back(self) -> None:
+        responses = iter([
+            (200, {"count": 0, "results": []}),
+            (200, {"actions": {"POST": {}}}),
+            (201, self.document_type()),
+            (200, self.document_type()),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            status, payload = next(responses)
+            return httpx.Response(status, json=payload, request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.create_document_type")("Invoice", confirm=True)
+        self.assertEqual(result, {"ok": True, "source": "work", "id": 4, "name": "Invoice", "created": True, "duplicate": False, "dry_run": False, "verified": True})
+        self.assertEqual([request.method for request in self.requests], ["GET", "OPTIONS", "POST", "GET"])
+        self.assertEqual(json.loads(self.requests[2].content), {"name": "Invoice"})
+
+    async def test_bulk_dry_run_preflights_every_document_without_patch(self) -> None:
+        responses = iter([
+            (200, self.document_type()),
+            (200, self.change_document(123, None)),
+            (200, {"id": 124, "title": "Document 124", "document_type": None}),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            status, payload = next(responses)
+            return httpx.Response(status, json=payload, request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.bulk_set_document_type")(["work:123", "work:124"], 4, dry_run=True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["status"], "preview")
+        self.assertEqual([entry["outcome"] for entry in result["results"]], ["would_update", "denied"])
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET", "GET"])
+        self.assertEqual(result["counts"]["would_update"], 1)
+        self.assertEqual(result["counts"]["denied"], 1)
+
+    async def test_bulk_known_rejection_continues_and_already_desired_skips(self) -> None:
+        responses = iter([
+            (200, self.document_type()),
+            (200, self.change_document(123, None)),
+            (200, self.change_document(124, None)),
+            (200, self.change_document(125, 4)),
+            (403, {"detail": "no"}),
+            (204, None),
+            (200, self.change_document(124, 4)),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            status, payload = next(responses)
+            return httpx.Response(status, json=payload, request=request) if payload is not None else httpx.Response(status, request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.bulk_set_document_type")(["work:123", "work:124", "work:125"], 4, confirm=True)
+        self.assertEqual([entry["outcome"] for entry in result["results"]], ["failed", "updated", "already_desired"])
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["retryable_document_refs"], ["work:123"])
+        self.assertEqual(result["results"][1]["after_document_type"], 4)
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET", "GET", "GET", "PATCH", "PATCH", "GET"])
+        self.assertEqual(json.loads(self.requests[4].content), {"document_type": 4})
+        self.assertEqual(json.loads(self.requests[5].content), {"document_type": 4})
+
+    async def test_bulk_uncertain_outcome_stops_remaining_writes(self) -> None:
+        responses = iter([
+            (200, self.document_type()),
+            (200, self.change_document(123, None)),
+            (200, self.change_document(124, None)),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if len(self.requests) == 3:
+                status, payload = next(responses)
+                return httpx.Response(status, json=payload, request=request)
+            if len(self.requests) < 3:
+                status, payload = next(responses)
+                return httpx.Response(status, json=payload, request=request)
+            raise httpx.ReadTimeout("network", request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.bulk_set_document_type")(["work:123", "work:124"], 4, confirm=True)
+        self.assertEqual([entry["outcome"] for entry in result["results"]], ["uncertain", "not_attempted"])
+        self.assertEqual(result["readback_required_document_refs"], ["work:123"])
+        self.assertEqual(result["remaining_document_refs"], ["work:124"])
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET", "GET", "PATCH"])
+
+    async def test_bulk_readback_wrong_document_id_is_uncertain(self) -> None:
+        responses = iter([
+            (200, self.document_type()),
+            (200, self.change_document(123, None)),
+            (204, None),
+            (200, self.change_document(124, 4)),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            status, payload = next(responses)
+            return httpx.Response(status, json=payload, request=request) if payload is not None else httpx.Response(status, request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.bulk_set_document_type")(["work:123"], 4, confirm=True)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["results"][0]["outcome"], "uncertain")
+        self.assertEqual(result["readback_required_document_refs"], ["work:123"])
+
+    async def test_bulk_target_absent_or_mismatched_never_patches(self) -> None:
+        for status, payload, error in (
+            (404, None, "paperless_document_type_not_found"),
+            (200, self.document_type(identifier=5), "paperless_response_invalid"),
+        ):
+            with self.subTest(error=error):
+                self.requests = []
+
+                async def handler(request: httpx.Request) -> httpx.Response:
+                    self.requests.append(request)
+                    return httpx.Response(status, json=payload, request=request) if payload is not None else httpx.Response(status, request=request)
+
+                self.mcp = FakeMCP()
+                self.register(handler)
+                result = await self.tool("paperless.bulk_set_document_type")(["work:123"], 4, dry_run=True)
+                self.assertEqual(result, {"ok": False, "source": "work", "error": error})
+                self.assertEqual([request.method for request in self.requests], ["GET"])
+
+    async def test_create_document_type_ambiguous_or_inaccessible_lookup_never_posts(self) -> None:
+        for status, payload, error in (
+            (200, {"count": 2, "results": [self.document_type(), self.document_type(identifier=5, name="Other")], "next": "https://paperless.wacg.dev/api/document_types/?page=2"}, "paperless_document_type_duplicate_lookup_ambiguous"),
+            (403, {"detail": "no"}, "paperless_document_type_duplicate_lookup_inaccessible"),
+        ):
+            with self.subTest(error=error):
+                self.requests = []
+
+                async def handler(request: httpx.Request) -> httpx.Response:
+                    self.requests.append(request)
+                    return httpx.Response(status, json=payload, request=request)
+
+                self.mcp = FakeMCP()
+                self.register(handler)
+                result = await self.tool("paperless.create_document_type")("Invoice", confirm=True)
+                self.assertEqual(result, {"ok": False, "source": "work", "error": error})
+                self.assertEqual([request.method for request in self.requests], ["GET"])
+
+    async def test_create_document_type_timeout_or_bad_readback_is_uncertain_after_one_post(self) -> None:
+        for outcome in ("timeout", "readback"):
+            with self.subTest(outcome=outcome):
+                self.requests = []
+
+                async def handler(request: httpx.Request) -> httpx.Response:
+                    self.requests.append(request)
+                    if len(self.requests) == 1:
+                        return httpx.Response(200, json={"count": 0, "results": []}, request=request)
+                    if len(self.requests) == 2:
+                        return httpx.Response(200, json={"actions": {"POST": {}}}, request=request)
+                    if outcome == "timeout":
+                        raise httpx.ReadTimeout("network", request=request)
+                    if len(self.requests) == 3:
+                        return httpx.Response(201, json=self.document_type(), request=request)
+                    return httpx.Response(200, json=self.document_type(name="Wrong"), request=request)
+
+                self.mcp = FakeMCP()
+                self.register(handler)
+                result = await self.tool("paperless.create_document_type")("Invoice", confirm=True)
+                self.assertEqual(result, {"ok": False, "source": "work", "error": "paperless_create_document_type_outcome_uncertain"})
+                self.assertEqual(sum(request.method == "POST" for request in self.requests), 1)
+
+    async def test_bulk_readback_wrong_type_stops_remaining_writes(self) -> None:
+        responses = iter([
+            (200, self.document_type()),
+            (200, self.change_document(123, None)),
+            (200, self.change_document(124, None)),
+            (204, None),
+            (200, self.change_document(123, 5)),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            status, payload = next(responses)
+            return httpx.Response(status, json=payload, request=request) if payload is not None else httpx.Response(status, request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.bulk_set_document_type")(["work:123", "work:124"], 4, confirm=True)
+        self.assertEqual([entry["outcome"] for entry in result["results"]], ["uncertain", "not_attempted"])
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET", "GET", "PATCH", "GET"])
+
+    async def test_bulk_already_desired_is_confirmed_without_patch(self) -> None:
+        responses = iter([
+            (200, self.document_type()),
+            (200, self.change_document(123, 4)),
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            status, payload = next(responses)
+            return httpx.Response(status, json=payload, request=request)
+
+        self.register(handler)
+        result = await self.tool("paperless.bulk_set_document_type")(["work:123"], 4, confirm=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["results"][0]["outcome"], "already_desired")
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET"])
 
 
 if __name__ == "__main__":
