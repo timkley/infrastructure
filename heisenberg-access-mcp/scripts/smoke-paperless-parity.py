@@ -37,6 +37,7 @@ async def main(source):
                 paperless = {t.name: t for t in tools if t.name.startswith('paperless.')}
                 assert set(paperless) == PAPERLESS_TOOLS
                 assert paperless['paperless.delete_document'].annotations.destructiveHint is True
+                assert 'preview_token' in paperless['paperless.delete_document'].inputSchema['properties']
                 assert paperless['paperless.create_correspondent'].annotations.destructiveHint is False
                 for name in ('paperless.update_document', 'paperless.delete_document', 'paperless.create_correspondent', 'paperless.create_document_type', 'paperless.bulk_set_document_type'):
                     assert paperless[name].annotations.readOnlyHint is False
@@ -81,6 +82,9 @@ async def main(source):
                 assert update.get('ok') and update['dry_run']
                 delete = await call('paperless.delete_document', {'document_ref': ref, 'dry_run': True})
                 assert delete.get('ok') and delete['dry_run'] and delete['would_move_to_trash']
+                assert isinstance(delete.get('preview_token'), str) and delete['preview_token']
+                assert delete['expires_in_seconds'] == 900
+                assert delete['delete_permission_verified'] is False
                 create = await call('paperless.create_correspondent', {'name': 'Heisenberg – nur Vorschau zur Tool-Parität', 'dry_run': True})
                 assert create.get('ok') and create['dry_run'] and create['would_create'] and not create['created']
                 type_create = await call('paperless.create_document_type', {'name': 'Heisenberg – nur Vorschau zur Tool-Parität', 'dry_run': True})
@@ -90,6 +94,8 @@ async def main(source):
                 for name, arguments, error in (
                     ('paperless.update_document', {'document_ref': ref, 'changes': {'title': before['title']}}, 'paperless_update_confirmation_required'),
                     ('paperless.delete_document', {'document_ref': ref}, 'paperless_delete_confirmation_required'),
+                    ('paperless.delete_document', {'document_ref': ref, 'preview_token': delete['preview_token']}, 'paperless_delete_confirmation_required'),
+                    ('paperless.delete_document', {'document_ref': ref, 'confirm': True}, 'paperless_delete_preview_required'),
                     ('paperless.create_correspondent', {'name': 'Preview'}, 'paperless_create_correspondent_confirmation_required'),
                     ('paperless.create_document_type', {'name': 'Preview'}, 'paperless_create_document_type_confirmation_required'),
                     ('paperless.bulk_set_document_type', {'document_refs': [ref], 'document_type_id': type_id}, 'paperless_bulk_set_document_type_confirmation_required'),

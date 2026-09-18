@@ -21,6 +21,11 @@ def main() -> int:
         "tests/test_paperless.py",
         "tests/test_paperless_writes.py",
         "scripts/check-shared-paperless.py",
+        "scripts/smoke-paperless-parity.py",
+        "scripts/sync-paperless-delete-permissions.py",
+        "tests/test_delete_permission_sync.py",
+        "systemd/heisenberg-paperless-delete-permissions@.service",
+        "systemd/heisenberg-paperless-delete-permissions@.timer",
     ):
         left, right = local / relative, peer / relative
         if not left.is_file() or not right.is_file():

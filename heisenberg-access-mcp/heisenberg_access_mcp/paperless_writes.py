@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 from collections.abc import Mapping
+from dataclasses import dataclass
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -20,7 +24,7 @@ PAPERLESS_WRITE_CAPABILITIES: dict[str, dict[str, object]] = {
     "paperless.delete_document": {
         "tool": "paperless.delete_document", "enabled": True, "read_only": False,
         "scope": "moves one confirmed fixed-source document to Paperless trash without exposing permanent deletion",
-        "writes": "DELETEs one fixed-source document with confirm=true and verifies it is absent from active documents",
+        "writes": "DELETEs one fixed-source document only after a fresh dry-run preview token and confirm=true, then verifies it is absent from active documents",
     },
     "paperless.create_correspondent": {
         "tool": "paperless.create_correspondent", "enabled": True, "read_only": False,
@@ -44,9 +48,20 @@ _MAX_CORRESPONDENT_NAME_LENGTH = 128
 _MAX_DOCUMENT_TYPE_NAME_LENGTH = 128
 _MAX_BULK_DOCUMENTS = 25
 _DUPLICATE_PAGE_SIZE = 25
+_DELETE_PREVIEW_TTL_SECONDS = 900
+_MAX_DELETE_PREVIEWS = 256
 _DELETE_ANNOTATIONS = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
 _CREATE_ANNOTATIONS = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
 _BULK_ANNOTATIONS = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
+
+
+@dataclass
+class _DeletePreview:
+    source: str
+    document_ref: str
+    state_hash: str
+    expires_at: float
+    consumed: bool = False
 
 
 def _require_source(source: object) -> str:
@@ -332,6 +347,8 @@ async def _mutation_request(*, method: str, base_url: str, api_token: str, path:
     body = b"".join(chunks)
     if not body:
         return response.status_code, None
+    if 400 <= response.status_code < 500:
+        return response.status_code, None
     try:
         return response.status_code, json.loads(body)
     except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
@@ -358,6 +375,95 @@ async def _active_document_absent(*, base_url: str, api_token: str, document_id:
     except httpx.HTTPError as error:
         raise PaperlessError("paperless_delete_outcome_uncertain") from error
     return response.status_code == 404
+
+
+def _delete_preview_state_hash(
+    *, document: object, metadata: Mapping[str, object], source: str, document_ref: str,
+) -> str:
+    """Bind the confirmation to the exact displayed document state, without retaining it."""
+    if not isinstance(document, Mapping):
+        raise PaperlessError("paperless_response_invalid")
+    state = {
+        "source": source,
+        "ref": document_ref,
+        "id": document.get("id"),
+        "modified": document.get("modified"),
+        "owner": document.get("owner"),
+        "metadata": dict(metadata),
+    }
+    try:
+        encoded = json.dumps(
+            state, allow_nan=False, ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise PaperlessError("paperless_response_invalid") from None
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _prune_delete_previews(previews: dict[str, _DeletePreview], *, now: float) -> None:
+    for token, preview in tuple(previews.items()):
+        if preview.expires_at <= now:
+            del previews[token]
+
+
+def _issue_delete_preview(
+    previews: dict[str, _DeletePreview],
+    *,
+    source: str,
+    document_ref: str,
+    state_hash: str,
+) -> str:
+    now = monotonic()
+    _prune_delete_previews(previews, now=now)
+    while len(previews) >= _MAX_DELETE_PREVIEWS:
+        del previews[next(iter(previews))]
+    token = f"{source}.{secrets.token_urlsafe(32)}"
+    while token in previews:
+        token = f"{source}.{secrets.token_urlsafe(32)}"
+    previews[token] = _DeletePreview(
+        source=source,
+        document_ref=document_ref,
+        state_hash=state_hash,
+        expires_at=now + _DELETE_PREVIEW_TTL_SECONDS,
+    )
+    return token
+
+
+def _validated_delete_preview(
+    previews: dict[str, _DeletePreview], *, source: str, document_ref: str, preview_token: object,
+) -> _DeletePreview:
+    if not isinstance(preview_token, str) or not preview_token:
+        raise PaperlessError("paperless_delete_preview_required")
+    token_source, separator, _ = preview_token.partition(".")
+    if separator and token_source in {"private", "work"} and token_source != source:
+        raise PaperlessError("paperless_delete_preview_wrong_source")
+    preview = previews.get(preview_token)
+    if preview is None:
+        raise PaperlessError("paperless_delete_preview_invalid")
+    if preview.expires_at <= monotonic():
+        del previews[preview_token]
+        raise PaperlessError("paperless_delete_preview_expired")
+    if preview.source != source:
+        raise PaperlessError("paperless_delete_preview_wrong_source")
+    if preview.document_ref != document_ref:
+        raise PaperlessError("paperless_delete_preview_wrong_ref")
+    if preview.consumed:
+        raise PaperlessError("paperless_delete_preview_reused")
+    return preview
+
+
+def _consume_delete_preview(
+    previews: dict[str, _DeletePreview], *, preview_token: str, preview: _DeletePreview,
+) -> None:
+    current = previews.get(preview_token)
+    if current is None or current is not preview:
+        raise PaperlessError("paperless_delete_preview_invalid")
+    if current.expires_at <= monotonic():
+        del previews[preview_token]
+        raise PaperlessError("paperless_delete_preview_expired")
+    if current.consumed:
+        raise PaperlessError("paperless_delete_preview_reused")
+    current.consumed = True
 
 
 async def _find_duplicate_correspondent(*, base_url: str, api_token: str, name: str, client_factory: ClientFactory) -> dict[str, object] | None:
@@ -427,28 +533,59 @@ def register_paperless_write_tools(mcp: Any, *, source: str, load_credentials: C
     """Register fixed-source write tools; callers cannot supply URLs or methods."""
     source = _require_source(source)
     normalized_expected_base_url = _normalize_base_url(expected_base_url, require_https=True)
+    delete_previews: dict[str, _DeletePreview] = {}
 
-    @mcp.tool(name="paperless.delete_document", description="Move one fixed-source document to trash after confirm=true; no permanent-delete path exists.", annotations=_DELETE_ANNOTATIONS)
-    async def delete_document(document_ref: str, confirm: bool = False, dry_run: bool = False) -> dict[str, object]:
-        """Soft-delete one fixed-source document and prove it is no longer active."""
+    @mcp.tool(name="paperless.delete_document", description="First call with dry_run=true to receive one short-lived preview_token. Move one fixed-source document to trash only with confirm=true and that matching token; no permanent-delete path exists.", annotations=_DELETE_ANNOTATIONS)
+    async def delete_document(
+        document_ref: str,
+        confirm: bool = False,
+        dry_run: bool = False,
+        preview_token: str | None = None,
+    ) -> dict[str, object]:
+        """Preview then soft-delete one fixed-source document, and prove it is no longer active."""
         try:
             document_id = _require_document_id(document_ref, source)
             is_dry_run = _require_dry_run(dry_run)
             if not is_dry_run and confirm is not True:
                 raise PaperlessError("paperless_delete_confirmation_required")
+            preview = None if is_dry_run else _validated_delete_preview(
+                delete_previews, source=source, document_ref=document_ref, preview_token=preview_token,
+            )
             base_url, api_token = await _load_configuration(load_credentials, expected_base_url=normalized_expected_base_url)
             current = await _get_json(base_url=base_url, api_token=api_token, path=f"/api/documents/{document_id}/", params=None, client_factory=client_factory)
             metadata = _document_metadata(current, source=source, base_url=base_url, expected_document_id=document_id)
+            state_hash = _delete_preview_state_hash(
+                document=current, metadata=metadata, source=source, document_ref=document_ref,
+            )
             if is_dry_run:
-                return {"ok": True, **metadata, "dry_run": True, "would_move_to_trash": True, "verified": False}
+                token = _issue_delete_preview(
+                    delete_previews, source=source, document_ref=document_ref, state_hash=state_hash,
+                )
+                return {
+                    "ok": True, **metadata, "dry_run": True, "would_move_to_trash": True,
+                    "preview_token": token, "expires_in_seconds": _DELETE_PREVIEW_TTL_SECONDS,
+                    "delete_permission_verified": False,
+                    "delete_permission_note": "Paperless checks delete permission on the confirmed call.",
+                    "verified": False,
+                }
+            if preview is None or preview.state_hash != state_hash:
+                raise PaperlessError("paperless_delete_preview_stale")
         except PaperlessError as error:
             return _error_payload(error, source=source)
         except Exception:
             return _error_payload(PaperlessError("paperless_request_failed"), source=source)
         try:
+            _consume_delete_preview(
+                delete_previews, preview_token=preview_token, preview=preview,
+            )
+        except PaperlessError as error:
+            return _error_payload(error, source=source)
+        try:
             status, _ = await _mutation_request(method="DELETE", base_url=base_url, api_token=api_token, path=f"/api/documents/{document_id}/", client_factory=client_factory)
+            if status in {401, 403}:
+                return {"ok": False, "source": source, "error": "paperless_delete_permission_denied", "provider_status": status}
             if 400 <= status < 500:
-                return _error_payload(PaperlessError("paperless_delete_rejected"), source=source)
+                return {"ok": False, "source": source, "error": "paperless_delete_rejected", "provider_status": status}
             if status != 204 or not await _active_document_absent(base_url=base_url, api_token=api_token, document_id=document_id, client_factory=client_factory):
                 return _error_payload(PaperlessError("paperless_delete_outcome_uncertain"), source=source)
         except Exception:

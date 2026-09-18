@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from collections.abc import Awaitable, Callable, Mapping
+from unittest.mock import patch
 
 import httpx
 
@@ -47,6 +49,16 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
 
     def tool(self, name: str) -> Callable[..., Awaitable[dict[str, object]]]:
         return self.mcp.tools[name]
+
+    async def delete_preview(self, document_ref: str = "work:123") -> str:
+        preview = await self.tool("paperless.delete_document")(document_ref, dry_run=True)
+        self.assertTrue(preview["ok"])
+        self.assertTrue(preview["dry_run"])
+        self.assertTrue(preview["would_move_to_trash"])
+        self.assertFalse(preview["delete_permission_verified"])
+        self.assertEqual(preview["expires_in_seconds"], 900)
+        self.assertIsInstance(preview["preview_token"], str)
+        return preview["preview_token"]
 
     @staticmethod
     def document() -> dict[str, object]:
@@ -141,6 +153,7 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
         cases = (
             ("paperless.delete_document", {"document_ref": "private:123"}, "paperless_document_ref_invalid"),
             ("paperless.delete_document", {"document_ref": "work:123"}, "paperless_delete_confirmation_required"),
+            ("paperless.delete_document", {"document_ref": "work:123", "confirm": True}, "paperless_delete_preview_required"),
             ("paperless.create_correspondent", {"name": " "}, "paperless_correspondent_name_invalid"),
             ("paperless.create_correspondent", {"name": "x" * 129}, "paperless_correspondent_name_invalid"),
             ("paperless.create_correspondent", {"name": "Acme GmbH"}, "paperless_create_correspondent_confirmation_required"),
@@ -170,14 +183,11 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json=self.document(), request=request)
 
         self.register(handler)
-        result = await self.tool("paperless.delete_document")("work:123", dry_run=True)
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["dry_run"])
-        self.assertTrue(result["would_move_to_trash"])
+        await self.delete_preview()
         self.assertEqual([request.method for request in self.requests], ["GET"])
 
     async def test_delete_success_proves_active_document_absent_but_not_trash_membership(self) -> None:
-        responses = iter([(200, self.document()), (204, None), (404, None)])
+        responses = iter([(200, self.document()), (200, self.document()), (204, None), (404, None)])
 
         async def handler(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)
@@ -185,18 +195,19 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(status, json=payload, request=request) if payload is not None else httpx.Response(status, request=request)
 
         self.register(handler)
-        result = await self.tool("paperless.delete_document")("work:123", confirm=True)
+        token = await self.delete_preview()
+        result = await self.tool("paperless.delete_document")("work:123", confirm=True, preview_token=token)
         self.assertTrue(result["ok"])
         self.assertEqual(result["deletion_mode"], "trash")
         self.assertTrue(result["active_document_absent"])
         self.assertFalse(result["trash_membership_verified"])
-        self.assertEqual([request.method for request in self.requests], ["GET", "DELETE", "GET"])
-        self.assertEqual(str(self.requests[1].url), "https://paperless.wacg.dev/api/documents/123/")
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET", "DELETE", "GET"])
+        self.assertEqual(str(self.requests[2].url), "https://paperless.wacg.dev/api/documents/123/")
 
     async def test_delete_redirect_or_wrong_readback_is_uncertain_without_retry(self) -> None:
         for responses in (
-            [(200, self.document()), (302, None)],
-            [(200, self.document()), (204, None), (200, self.document())],
+            [(200, self.document()), (200, self.document()), (302, None)],
+            [(200, self.document()), (200, self.document()), (204, None), (200, self.document())],
         ):
             with self.subTest(responses=responses):
                 self.requests = []
@@ -209,8 +220,161 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
 
                 self.mcp = FakeMCP()
                 self.register(handler)
-                result = await self.tool("paperless.delete_document")("work:123", confirm=True)
+                token = await self.delete_preview()
+                result = await self.tool("paperless.delete_document")("work:123", confirm=True, preview_token=token)
                 self.assertEqual(result, {"ok": False, "source": "work", "error": "paperless_delete_outcome_uncertain"})
+
+    async def test_delete_preview_is_bound_to_ref_and_current_metadata(self) -> None:
+        responses = iter([
+            self.document(),
+            {**self.document(), "modified": "2026-09-18T10:00:00Z"},
+        ])
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return httpx.Response(200, json=next(responses), request=request)
+
+        self.register(handler)
+        token = await self.delete_preview()
+        wrong_ref = await self.tool("paperless.delete_document")(
+            "work:124", confirm=True, preview_token=token,
+        )
+        self.assertEqual(
+            wrong_ref,
+            {"ok": False, "source": "work", "error": "paperless_delete_preview_wrong_ref"},
+        )
+        stale = await self.tool("paperless.delete_document")(
+            "work:123", confirm=True, preview_token=token,
+        )
+        self.assertEqual(
+            stale,
+            {"ok": False, "source": "work", "error": "paperless_delete_preview_stale"},
+        )
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET"])
+
+    async def test_delete_preview_expiry_reuse_and_source_reject_without_http(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if request.method == "DELETE":
+                return httpx.Response(403, content=b"<html>forbidden</html>", request=request)
+            return httpx.Response(200, json=self.document(), request=request)
+
+        self.register(handler)
+        with patch("heisenberg_access_mcp.paperless_writes.monotonic", return_value=100.0):
+            expired_token = await self.delete_preview()
+        with patch("heisenberg_access_mcp.paperless_writes.monotonic", return_value=1001.0):
+            expired = await self.tool("paperless.delete_document")(
+                "work:123", confirm=True, preview_token=expired_token,
+            )
+        self.assertEqual(
+            expired,
+            {"ok": False, "source": "work", "error": "paperless_delete_preview_expired"},
+        )
+        self.assertEqual([request.method for request in self.requests], ["GET"])
+
+        token = await self.delete_preview()
+        denied = await self.tool("paperless.delete_document")(
+            "work:123", confirm=True, preview_token=token,
+        )
+        self.assertEqual(
+            denied,
+            {"ok": False, "source": "work", "error": "paperless_delete_permission_denied", "provider_status": 403},
+        )
+        reused = await self.tool("paperless.delete_document")(
+            "work:123", confirm=True, preview_token=token,
+        )
+        self.assertEqual(
+            reused,
+            {"ok": False, "source": "work", "error": "paperless_delete_preview_reused"},
+        )
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET", "GET", "DELETE"])
+
+        private_mcp = FakeMCP()
+        register_paperless_write_tools(
+            private_mcp, source="private", load_credentials=self.credentials,
+            expected_base_url="https://paperless.timkley.dev",
+            client_factory=lambda **kwargs: self.fail("cross-source token must not make HTTP"),
+        )
+        wrong_source = await private_mcp.tools["paperless.delete_document"](
+            "private:123", confirm=True, preview_token=token,
+        )
+        self.assertEqual(
+            wrong_source,
+            {"ok": False, "source": "private", "error": "paperless_delete_preview_wrong_source"},
+        )
+
+    async def test_concurrent_delete_confirmation_consumes_only_one_preview(self) -> None:
+        confirmation_reads = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal confirmation_reads
+            self.requests.append(request)
+            if request.method == "GET":
+                confirmation_reads += 1
+                if confirmation_reads > 1:
+                    await asyncio.sleep(0)
+                return httpx.Response(200, json=self.document(), request=request)
+            if request.method == "DELETE":
+                return httpx.Response(403, content=b"denied", request=request)
+            self.fail(f"unexpected request: {request.method}")
+
+        self.register(handler)
+        token = await self.delete_preview()
+        first, second = await asyncio.gather(
+            self.tool("paperless.delete_document")("work:123", confirm=True, preview_token=token),
+            self.tool("paperless.delete_document")("work:123", confirm=True, preview_token=token),
+        )
+        self.assertEqual(sum(request.method == "DELETE" for request in self.requests), 1)
+        self.assertEqual(
+            {first["error"], second["error"]},
+            {"paperless_delete_permission_denied", "paperless_delete_preview_reused"},
+        )
+
+    async def test_delete_preview_expiring_during_reread_never_reaches_delete(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            return httpx.Response(200, json=self.document(), request=request)
+
+        self.register(handler)
+        with patch("heisenberg_access_mcp.paperless_writes.monotonic", side_effect=[100.0, 100.0, 1001.0]):
+            token = await self.delete_preview()
+            result = await self.tool("paperless.delete_document")(
+                "work:123", confirm=True, preview_token=token,
+            )
+        self.assertEqual(
+            result,
+            {"ok": False, "source": "work", "error": "paperless_delete_preview_expired"},
+        )
+        self.assertEqual([request.method for request in self.requests], ["GET", "GET"])
+
+    async def test_delete_preview_evicted_during_reread_never_reaches_delete(self) -> None:
+        evicting = False
+        issuing = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal evicting, issuing
+            self.requests.append(request)
+            if request.method != "GET":
+                self.fail(f"unexpected request: {request.method}")
+            if evicting and not issuing:
+                issuing = True
+                for _ in range(256):
+                    await self.tool("paperless.delete_document")("work:123", dry_run=True)
+                issuing = False
+                evicting = False
+            return httpx.Response(200, json=self.document(), request=request)
+
+        self.register(handler)
+        token = await self.delete_preview()
+        evicting = True
+        result = await self.tool("paperless.delete_document")(
+            "work:123", confirm=True, preview_token=token,
+        )
+        self.assertEqual(
+            result,
+            {"ok": False, "source": "work", "error": "paperless_delete_preview_invalid"},
+        )
+        self.assertEqual(sum(request.method == "DELETE" for request in self.requests), 0)
 
     async def test_create_dry_run_has_exact_lookup_and_no_post(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -334,9 +498,9 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_rejection_and_readback_auth_or_redirect_are_not_retried(self) -> None:
         scenarios = (
-            ([(200, self.document()), (403, None)], ["GET", "DELETE"], "paperless_delete_rejected"),
-            ([(200, self.document()), (204, None), (401, None)], ["GET", "DELETE", "GET"], "paperless_delete_outcome_uncertain"),
-            ([(200, self.document()), (204, None), (302, None)], ["GET", "DELETE", "GET"], "paperless_delete_outcome_uncertain"),
+            ([(200, self.document()), (200, self.document()), (403, None)], ["GET", "GET", "DELETE"], "paperless_delete_permission_denied"),
+            ([(200, self.document()), (200, self.document()), (204, None), (401, None)], ["GET", "GET", "DELETE", "GET"], "paperless_delete_outcome_uncertain"),
+            ([(200, self.document()), (200, self.document()), (204, None), (302, None)], ["GET", "GET", "DELETE", "GET"], "paperless_delete_outcome_uncertain"),
         )
         for responses, methods, error in scenarios:
             with self.subTest(error=error, responses=responses):
@@ -350,8 +514,12 @@ class PaperlessWriteToolsTest(unittest.IsolatedAsyncioTestCase):
 
                 self.mcp = FakeMCP()
                 self.register(handler)
-                result = await self.tool("paperless.delete_document")("work:123", confirm=True)
-                self.assertEqual(result, {"ok": False, "source": "work", "error": error})
+                token = await self.delete_preview()
+                result = await self.tool("paperless.delete_document")("work:123", confirm=True, preview_token=token)
+                if error == "paperless_delete_permission_denied":
+                    self.assertEqual(result, {"ok": False, "source": "work", "error": error, "provider_status": 403})
+                else:
+                    self.assertEqual(result, {"ok": False, "source": "work", "error": error})
                 self.assertEqual([request.method for request in self.requests], methods)
 
     @staticmethod

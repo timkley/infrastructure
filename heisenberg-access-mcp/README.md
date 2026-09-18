@@ -86,14 +86,33 @@ The tool sends one PATCH, then reads the document again and verifies the changed
 fields. It does not retry writes. If it reports `paperless_update_outcome_uncertain`,
 read the document before deciding whether another write is needed.
 
-`paperless.delete_document(document_ref, confirm=false, dry_run=false)` moves
-one document to the Paperless trash via its normal DELETE endpoint. It requires
-`confirm=true`; `dry_run=true` reads a preview only. A successful write requires
-HTTP 204 and a subsequent HTTP 404 on the active document endpoint. The result
-reports that absence and states that trash membership itself was not verified:
-Paperless can hide foreign-owned trash records from non-superuser accounts.
-Restoration remains possible until Paperless permanently empties that entry.
-The MCP has no permanent deletion or trash-emptying endpoint.
+`paperless.delete_document(document_ref, confirm=false, dry_run=false,
+preview_token=null)` moves one source-qualified document to the Paperless trash.
+A real deletion requires a fresh preview and explicit confirmation:
+
+1. Call with `dry_run=true` and review the returned document details. This makes
+   no DELETE request and returns a short-lived `preview_token`.
+2. After approval for this exact document, call again with `confirm=true` and
+   that token. The MCP rereads the document and refuses a changed document.
+3. The MCP consumes the preview before its single DELETE request. It never
+   retries an unclear result. A new attempt needs a new preview and confirmation.
+
+Previews expire after 15 minutes and after a container restart; the bounded
+in-memory store may evict older previews. Tokens are tied to the source,
+document and previewed state. They record a prior preview, not independent proof
+of human approval. The caller must obtain that approval separately.
+
+The public Paperless API does not expose a reliable per-document delete-right
+check. A preview therefore reports that the right is not independently verified;
+Paperless enforces it during DELETE. HTTP 401/403 produces a specific permission
+error. No token, upstream error body or exception details are returned.
+
+Success requires HTTP 204 followed by HTTP 404 on the active document endpoint.
+This verifies its absence from active documents. Paperless hides foreign-owned
+trash entries from this account, so the tool explicitly reports that trash
+membership itself was not independently verified. Restoration remains possible
+through Paperless until its trash retention policy permanently removes the item.
+The MCP exposes no permanent deletion or trash-emptying endpoint.
 
 `paperless.create_correspondent(name, confirm=false, dry_run=false)` accepts a
 name of at most 128 characters. It first checks for existing names without
@@ -157,6 +176,54 @@ MCP code, then validate the deployment:
 
 No document contents should be written to operational logs or pasted into a
 shared deployment report. Start with a harmless test document for the live check.
+
+### Maintaining object delete permissions
+
+Paperless import workflows assign view/change rights but cannot assign delete
+rights. The separate host command `scripts/sync-paperless-delete-permissions.py`
+adds direct object delete rights only to active foreign-owned documents with
+both effective object view and change rights for the fixed MCP account. It
+requires existing global view/change/delete rights and never changes them,
+document owners, other users' rights, or credentials. Private and Work accounts,
+containers and state files remain separate.
+
+Run from this MCP directory on its own host; inspect the preview before the first
+apply (use `--source private` on Lando and `--source work` on the Work host):
+
+```bash
+sudo python3 scripts/sync-paperless-delete-permissions.py --source private
+sudo python3 scripts/sync-paperless-delete-permissions.py --source private --apply
+```
+
+The root-only ledger in `/var/lib/heisenberg-paperless-delete-permissions/`
+records exact Guardian row IDs created by this helper. It withdraws only those
+managed grants if an active document loses view/change access, retains them for
+trashed documents, and removes its exact tracked orphan grants plus ledger
+entries after physical document removal. Already cascaded rows need no deletion.
+Existing manual or group delete grants are never adopted or revoked. A crash
+between database commit and ledger update leaves a pending intent: subsequent
+runs stop and require an operator to compare the database and ledger before
+resolving it. Never clear that marker blindly or automatically retry the write.
+
+To keep new imports covered, install the separate host timer after the first
+successful apply and an empty follow-up preview:
+
+```bash
+sudo install -d -m 0755 /usr/local/lib/heisenberg-paperless-delete-permissions
+sudo install -m 0644 scripts/sync-paperless-delete-permissions.py /usr/local/lib/heisenberg-paperless-delete-permissions/
+sudo install -m 0644 systemd/heisenberg-paperless-delete-permissions@.service systemd/heisenberg-paperless-delete-permissions@.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now heisenberg-paperless-delete-permissions@private.timer
+sudo systemctl start heisenberg-paperless-delete-permissions@private.service
+sudo systemctl status heisenberg-paperless-delete-permissions@private.timer
+```
+
+The timer checks every two minutes. The root host helper uses Docker to run a
+bounded Django transaction in Paperless; the MCP container gets no Docker socket
+or administrator credentials. The timer only manages permissions and never
+invokes a document DELETE. Check failed units/journal for pending intents or
+identity drift. Disable the timer to pause future changes; disabling it does not
+remove grants already made.
 
 Run the local tests without contacting Paperless:
 

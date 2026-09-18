@@ -1,0 +1,11 @@
+[Unit]
+Description=Check bounded Paperless delete permissions (%i)
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=2min
+RandomizedDelaySec=15s
+Unit=heisenberg-paperless-delete-permissions@%i.service
+
+[Install]
+WantedBy=timers.target
