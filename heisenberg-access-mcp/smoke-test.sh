@@ -56,6 +56,11 @@ async def main() -> None:
             tool_names = sorted(tool.name for tool in tools.tools)
             expected = {
                 "access_status",
+                "whatsapp.archive_status",
+                "whatsapp.list_chats",
+                "whatsapp.search_messages",
+                "whatsapp.get_context",
+                "whatsapp.get_attachment",
                 "openbao_status",
                 "paperless.search_documents",
                 "paperless.get_document",

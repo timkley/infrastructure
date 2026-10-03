@@ -33,7 +33,7 @@ class PrivatePaperlessIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_paperless_is_added_without_removing_existing_tools(self) -> None:
         mcp = build_mcp()
         names = {tool.name for tool in await mcp.list_tools()}
-        self.assertEqual(len(names), 35)
+        self.assertEqual(len(names), 40)
         self.assertTrue({
             "paperless.search_documents", "paperless.get_document", "paperless.read_document",
             "paperless.list_metadata", "paperless.update_document",

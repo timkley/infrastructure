@@ -28,6 +28,7 @@ from .paperless_writes import (
     PAPERLESS_WRITE_CAPABILITIES,
     register_paperless_write_tools,
 )
+from .whatsapp import capabilities as whatsapp_capabilities, download_response as whatsapp_download_response, register_whatsapp_tools
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
@@ -3955,7 +3956,7 @@ def build_mcp() -> FastMCP:
             "source": "private",
             "ok": True,
             "openbao": openbao_target_summary(openbao_addr),
-            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES, **PAPERLESS_UPDATE_CAPABILITIES, **PAPERLESS_WRITE_CAPABILITIES},
+            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES, **PAPERLESS_UPDATE_CAPABILITIES, **PAPERLESS_WRITE_CAPABILITIES, **whatsapp_capabilities()},
         }
 
     @mcp.tool()
@@ -5043,6 +5044,7 @@ def build_mcp() -> FastMCP:
         load_credentials=load_paperless_credentials,
     )
 
+    register_whatsapp_tools(mcp)
     return mcp
 
 
@@ -5061,6 +5063,14 @@ async def download_artifact(request: Request) -> Response:
         return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
 
     return artifact_response_for(request.path_params["artifact_id"])
+
+
+async def download_whatsapp_attachment(request: Request) -> Response:
+    expected_token = require_env("HEISENBERG_ACCESS_MCP_TOKEN")
+    provided_token = bearer_token_from_request(request)
+    if provided_token is None or not hmac.compare_digest(provided_token, expected_token):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    return await asyncio.to_thread(whatsapp_download_response, request.path_params["message_ref"])
 
 
 async def upload_audio_artifact(request: Request) -> JSONResponse:
@@ -5097,6 +5107,7 @@ app = Starlette(
         Route("/health", health, methods=["GET"]),
         Route("/artifacts/uploads/audio", upload_audio_artifact, methods=["POST"]),
         Route("/artifacts/{artifact_id}", download_artifact, methods=["GET"]),
+        Route("/whatsapp/attachments/{message_ref}", download_whatsapp_attachment, methods=["GET"]),
         Mount("/", app=mcp_server.streamable_http_app()),
     ],
     middleware=[Middleware(AccessLogMiddleware)],

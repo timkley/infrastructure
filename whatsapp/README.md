@@ -107,11 +107,36 @@ das iPhone muss online sein. Fehlende Nachrichten, ausbleibende Antworten und
 nicht mehr verfügbare Medien sind Lücken, kein Beweis eines vollständigen
 Archivs. Backfill nicht mit dem Dauerbetrieb gleichzeitig starten.
 
+Den vollständigen Lauf über alle gespeicherten Chats auf dem Compose-Host starten:
+
+```sh
+python3 -u backfill.py
+# Nach einem abgebrochenen Lauf bereits bearbeitete Chats überspringen:
+python3 -u backfill.py --resume
+```
+
+Das iPhone dabei online und WhatsApp geöffnet halten. Der Runner stoppt den
+Dauerbetrieb, erstellt konsistente lokale Sicherheitskopien beider Datenbanken,
+fordert pro Chat ältere Nachrichten an und lädt anschließend alle vorhandenen
+Medien nach. Für abgelaufene CDN-Dateien versucht er einen Re-Upload vom iPhone.
+Er startet den Dauerbetrieb auch bei Fehlern oder SIGTERM wieder. Ein Hostausfall
+oder SIGKILL kann diese Wiederaufnahme verhindern; dann `docker compose up -d app`.
+Ein eigener Runner-Lock verhindert parallele Backfill-Läufe.
+
+Private Ergebnisse und Logs liegen unter `data/backfill/`, der aktuelle Status
+unter `data/store/archive-backfill.json`. Diese Dateien enthalten Chat-IDs und
+bleiben außerhalb von Git. Die lokalen Sicherheitskopien sind kein externes
+Backup. Ein erneuter Lauf beginnt mit dem vorhandenen Archiv und lädt fehlende
+Historie und Medien nach; er löscht keine Archivnachrichten. Requests und
+Wartezeiten sind begrenzt. Timeout, fehlender Anker, Batch-Limit und die Antwort
+„keine älteren Nachrichten“ sind getrennte Ergebnisse, kein Nachweis einer
+vollständigen iPhone-Sicherung.
+
 ## Backups und MCP
 
-Der Service legt den Store für die geplanten Erweiterungen bereit. Die
-Aufnahme in `backup/backup.sh` und die MCP-Suchwerkzeuge sind eigene nächste
-Schritte und durch diesen Service noch nicht aktiviert.
+`heisenberg-access-mcp` bindet den Store direkt read-only ein und stellt fünf
+private `whatsapp.*`-Werkzeuge bereit. Die Aufnahme in `backup/backup.sh` ist ein
+separater nächster Schritt.
 
 Das bestehende Restic-Backup soll konsistente SQLite-Snapshots beider
 Datenbanken zusammen mit den Medien sichern. Für einen vollständigen Transfer
@@ -123,6 +148,10 @@ Der private MCP liest `wacli.db` direkt über einen read-only Verzeichnismount
 und SQLite `mode=ro` plus `PRAGMA query_only=ON`. WAL/SHM müssen sichtbar sein;
 bei laufendem Sync nicht `immutable=1` setzen. Suchwerkzeuge dürfen keine
 Geräte- oder Medientransportschlüssel zurückgeben und `session.db` nicht abfragen.
+Beide Container verwenden dieselbe UID/GID (standardmäßig 1000:1000), damit
+SQLite-Dateien und Anhänge bei 0600/0700 bleiben können. Bei abweichender UID/GID
+die Werte in beiden Compose-Projekten identisch setzen. Der MCP-Mount verhindert
+Schreibzugriffe unabhängig von diesen Dateirechten.
 
 ## Quellen
 

@@ -3,6 +3,8 @@ services:
     container_name: heisenberg-access-mcp-app
     build: .
     restart: unless-stopped
+    # Same UID as the archive writer; the WhatsApp mount itself is read-only.
+    user: "${WHATSAPP_UID:-1000}:${WHATSAPP_GID:-1000}"
     env_file:
       - .env
     environment:
@@ -10,10 +12,17 @@ services:
       HEISENBERG_ACCESS_MCP_PORT: 8000
       OPENBAO_ADDR: ${OPENBAO_ADDR:-http://openbao-app:8200}
       HEISENBERG_ACCESS_MCP_ARTIFACT_DIR: /var/lib/heisenberg-access-mcp/artifacts
+      HEISENBERG_ACCESS_MCP_WHATSAPP_STORE: /var/lib/heisenberg-access-mcp/whatsapp
     ports:
       - "${HEISENBERG_ACCESS_MCP_BIND_ADDR:-127.0.0.1}:${HEISENBERG_ACCESS_MCP_BIND_PORT:-8020}:8000"
     volumes:
       - artifacts:/var/lib/heisenberg-access-mcp/artifacts
+      - type: bind
+        source: ../whatsapp/data/store
+        target: /var/lib/heisenberg-access-mcp/whatsapp
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - default
       - openbao

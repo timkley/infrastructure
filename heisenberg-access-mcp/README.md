@@ -5,6 +5,11 @@ Heisenberg Access MCP is the private policy and capability gate in front of Open
 The MCP exposes status tools plus narrow service capabilities:
 
 - `access_status` reports MCP readiness and the declared capability registry.
+- `whatsapp.archive_status()` reports private archive counts and incomplete backfill coverage.
+- `whatsapp.list_chats(query?, kind?, limit=25, offset=0)` finds chats and their date ranges.
+- `whatsapp.search_messages(query?, chat_ref?, sender_ref?, start?, end?, media_type?, limit=25, offset=0, order="recent")` searches all terms through SQLite FTS5. Omit query for chat timelines or media/date filtering, including voice messages with no text. `order="relevance"` ranks text matches; `order="oldest"` walks a timeline from its beginning. Date-only filters use Europe/Berlin, including the full end day; explicit timestamps require an offset and have an exclusive end.
+- `whatsapp.get_context(message_ref, before=8, after=8, message_text_offset=0)` reads surrounding messages and the locally available reply target. Long messages can be paginated using `next_text_offset`.
+- `whatsapp.get_attachment(message_ref)` validates an existing file and returns metadata plus a private bearer-authenticated download URL. It never fetches files from WhatsApp.
 - `openbao_status` reports whether OpenBao is reachable and ready, using only safe status fields.
 - `x.get_tweet(tweet_id_or_url)` reads one public tweet through server-side X OAuth, refreshes the stored OAuth token when needed, verifies that the author is not protected, and returns tweet text, author metadata, URL, created time, public metrics, and media URLs.
 - `x.list_bookmarks(page_size?, pagination_token?)` reads Tim's current X bookmarks through server-side X OAuth, with pagination and tweet/media/author context for Brain ingest.
@@ -414,6 +419,39 @@ Response handling defaults to `response_mode="auto"`:
 Mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) require `confirm=true`. Agents must only set that flag after Tim has explicitly approved the external write/action in the current turn. Use `dry_run=true` to inspect the target method/host/path without making the request.
 
 ## Setup on Lando
+
+The private WhatsApp tools read `../whatsapp/data/store/wacli.db` directly. The
+entire store directory is mounted read-only so the live writer's WAL/SHM are
+visible. SQLite uses `mode=ro`, `query_only=ON` and a short read transaction per
+request; there is no query copy, `immutable=1`, WhatsApp connection, or SQL tool.
+Only explicit message columns are read; session.db and media transport keys are
+never queried. Search excludes revoked/deleted rows; context keeps tombstones
+without exposing their prior text. Responses are bounded and source-qualified.
+
+Configure `HEISENBERG_ACCESS_MCP_WHATSAPP_STORE` to select the server-owned mount
+path. Chat/message/sender references come from the tools, never caller-provided
+filesystem paths. Attachments are confined to the media directory, verified on
+disk, and served from `/whatsapp/attachments/<message_ref>` with the existing
+MCP bearer token and no-store caching. Missing files are reported; the MCP does
+not download them or send messages. Long search text has a matching snippet;
+use context and its text pagination for the rest.
+
+The MCP and archive use the same UID/GID (default 1000:1000), preserving the
+archive's 0600 files and 0700 directories. An existing MCP artifact volume owned
+by the previous UID 100 requires a one-time ownership migration while the MCP
+is stopped, limited to that volume:
+
+```sh
+docker compose stop app
+docker compose run --rm --no-deps --user 0 --entrypoint chown app \
+  -R 1000:1000 /var/lib/heisenberg-access-mcp/artifacts
+docker compose up -d app
+```
+
+For a custom archive UID/GID, set `WHATSAPP_UID` and `WHATSAPP_GID` in both
+Compose projects and use those same values for the ownership migration. The
+bind mount fails if the WhatsApp store is absent. An unconfigured archive returns
+a narrow unavailable response and does not affect other provider tools.
 
 ```bash
 cd /home/admin/docker/heisenberg-access-mcp

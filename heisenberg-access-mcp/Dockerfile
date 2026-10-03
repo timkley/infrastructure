@@ -11,8 +11,8 @@ COPY heisenberg_access_mcp ./heisenberg_access_mcp
 
 RUN pip install --no-cache-dir .
 
-RUN addgroup --system app \
-  && adduser --system --ingroup app app \
+RUN addgroup --gid 1000 app \
+  && adduser --disabled-password --gecos '' --uid 1000 --ingroup app app \
   && mkdir -p /var/lib/heisenberg-access-mcp/artifacts \
   && chown -R app:app /var/lib/heisenberg-access-mcp
 USER app
