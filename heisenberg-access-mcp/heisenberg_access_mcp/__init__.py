@@ -1,2 +1,0 @@
-"""Heisenberg Access MCP."""
-
