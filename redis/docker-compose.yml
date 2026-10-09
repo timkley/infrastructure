@@ -1,6 +1,6 @@
 services:
   app:
-    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: redis:7.4.11-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
     container_name: redis
     restart: unless-stopped
     ports:

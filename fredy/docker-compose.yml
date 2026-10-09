@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/orangecoding/fredy:26.8.0@sha256:e8d1cfdef4b4c70b1892698ed2f7962825644b669aac33c596c5cdc9a5092530
+    image: ghcr.io/orangecoding/fredy:28.4.0@sha256:20c5ba8b111913fe2e0907976b07dc085b96f89de88ace88cf070c4ecbf45e2a
     restart: unless-stopped
     mem_limit: 1g
     environment:

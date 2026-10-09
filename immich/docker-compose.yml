@@ -8,7 +8,7 @@ name: immich
 services:
   app:
     container_name: immich-app
-    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION}@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION}@sha256:d317916b28090c33eb36b308464ea391f8b7df1d850fcfea227a39ec879718c2
     volumes:
       - ${UPLOAD_LOCATION}:/data
       - /etc/localtime:/etc/localtime:ro
@@ -36,7 +36,7 @@ services:
 
   machine-learning:
     container_name: immich-machine-learning
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION}@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION}@sha256:e16c2f166a8174901959fdf85e2e4c7bd1ebc4b37e0b6655de97c41408a260c4
     volumes:
       - model-cache:/cache
     env_file:
@@ -51,7 +51,7 @@ services:
 
   broker:
     container_name: immich-broker
-    image: docker.io/valkey/valkey:9@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
+    image: docker.io/valkey/valkey:9.1.2@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
     healthcheck:
       test: redis-cli ping || exit 1
     restart: always

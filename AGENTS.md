@@ -7,4 +7,3 @@
 ## Instruction Files
 
 - Durable agent instructions belong in `AGENTS.md`.
-- `CLAUDE.md` should be a symlink to `AGENTS.md`, without unique rules.

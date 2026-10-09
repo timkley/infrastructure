@@ -1,6 +1,6 @@
 services:
   app:
-    image: "lscr.io/linuxserver/unifi-network-application:10.5.67-ls141@sha256:cb452744be875e091bad374999e90b08f34813d5bee03de814188de3d6eb5e99"
+    image: "lscr.io/linuxserver/unifi-network-application:10.6.106-ls148@sha256:5d288401f8bce9561caa64939ef4188bbb5a3e0f5bc159a833fdabd9afbc531a"
     depends_on:
       db:
         condition: service_healthy
@@ -60,7 +60,7 @@ services:
       - "traefik.http.services.${COMPOSE_PROJECT_NAME}-inform.loadbalancer.server.scheme=http"
 
   db:
-    image: "mongo:8.0.29-noble@sha256:021b2d5ae9d253f2cca17491cc8d03aed8df3c840f3252066aa62d3277fc406e"
+    image: "mongo:8.0.32-noble@sha256:0393ab544cbbe92b2dd64719205ecb14a8b3824b17ea75051e2f22482c3e4e66"
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USER:?Set MONGO_ROOT_USER in unifi/.env}"

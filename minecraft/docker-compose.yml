@@ -1,6 +1,6 @@
 services:
   mc:
-    image: itzg/minecraft-server:2026.8.2@sha256:efa878ddb49cf5251b2e5f2ad71b08fd2f7236c1f7907433f6697258b31d2ce4
+    image: itzg/minecraft-server:2026.9.2@sha256:de5d1b1a83eba576f6c8a688fac2a3523ce457724cdebc8ea48d7818b74cdf6e
     tty: true
     stdin_open: true
     restart: "unless-stopped"
@@ -52,7 +52,8 @@ services:
       - "./servercore:/data/config/servercore"
 
   backups:
-    image: itzg/mc-backup:2026.8.2@sha256:cef928637262946c4988d7128eb3e17dcabc399e22b9c1e9d0297de86949a1cf
+    image: itzg/mc-backup:2026.9.3@sha256:3ff6a1e8fa15ca4e4440b118676cf58c611a4079d4da8fe792b04a9a13619f16
+    restart: unless-stopped
     environment:
       BACKUP_INTERVAL: "12h"
       RCON_HOST: mc
