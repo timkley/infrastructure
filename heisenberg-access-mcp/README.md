@@ -2,14 +2,9 @@
 
 Heisenberg Access MCP is the private policy and capability gate in front of OpenBao. Agents get narrow MCP tools, not raw secrets, refresh tokens, API keys, or arbitrary Vault paths.
 
-The MCP exposes status tools plus narrow service capabilities:
+The MCP exposes the remaining private integrations through 24 tools:
 
 - `access_status` reports MCP readiness and the declared capability registry.
-- `whatsapp.archive_status()` reports private archive counts and incomplete backfill coverage.
-- `whatsapp.list_chats(query?, kind?, limit=25, offset=0)` finds chats and their date ranges.
-- `whatsapp.search_messages(query?, chat_ref?, sender_ref?, start?, end?, media_type?, limit=25, offset=0, order="recent")` searches all terms through SQLite FTS5. Omit query for chat timelines or media/date filtering, including voice messages with no text. `order="relevance"` ranks text matches; `order="oldest"` walks a timeline from its beginning. Date-only filters use Europe/Berlin, including the full end day; explicit timestamps require an offset and have an exclusive end.
-- `whatsapp.get_context(message_ref, before=8, after=8, message_text_offset=0)` reads surrounding messages and the locally available reply target. Long messages can be paginated using `next_text_offset`.
-- `whatsapp.get_attachment(message_ref)` validates an existing file and returns metadata plus a private bearer-authenticated download URL. It never fetches files from WhatsApp.
 - `openbao_status` reports whether OpenBao is reachable and ready, using only safe status fields.
 - `x.get_tweet(tweet_id_or_url)` reads one public tweet through server-side X OAuth, refreshes the stored OAuth token when needed, verifies that the author is not protected, and returns tweet text, author metadata, URL, created time, public metrics, and media URLs.
 - `x.list_bookmarks(page_size?, pagination_token?)` reads Tim's current X bookmarks through server-side X OAuth, with pagination and tweet/media/author context for Brain ingest.
@@ -29,165 +24,59 @@ The MCP exposes status tools plus narrow service capabilities:
 - `elevenlabs.speech_to_text(input_artifact_id, num_speakers=10, language_code="deu", confirm=false, dry_run=false)` transcribes a private uploaded M4A with Scribe v2. It always requests diarization, word timestamps, and audio-event tags. The maximum configured speaker count is 10. The full JSON transcript is stored as a private artifact; MCP returns compact metadata and download instructions only.
 - `elevenlabs.request(...)` is a service-scoped ElevenLabs request tool for `https://api.elevenlabs.io`. The API key is never returned. Known binary responses are stored as private artifacts, large JSON is redacted before artifact storage, and large text-like responses are refused.
 - `homeassistant.request(...)` is a service-scoped Home Assistant request tool for the `url` configured in OpenBao.
-- `freshrss.request(...)` is a service-scoped FreshRSS request tool for the `api_url` configured in OpenBao.
-- `tandoor.request(...)` is a service-scoped Tandoor request tool for the `url` configured in OpenBao.
 
 It intentionally does not provide a `read_secret(path)` style tool.
 
-## Paperless private
+## Übernommene Integrationen
 
-This deployment exposes only the private Paperless instance. The work deployment
-lives separately in the work infrastructure repository under
-`docker/heisenberg-work-mcp`. The assistant workspace can connect to both; each
-deployment keeps its own credentials, tools and network configuration. Separate
-MCPs do not separate information inside a conversation that may call both.
+Paperless, Tandoor, FreshRSS und WhatsApp werden jetzt über Holocrons
+OAuth-Endpunkt `https://tim-kleyersburg.de/mcp` bereitgestellt. Der private
+Legacy-MCP registriert ihre Tools nicht mehr und verweigert deren
+OpenBao-Secrets bereits in seiner internen Allowlist. Holocron erhält die Zugangsdaten als
+Deployment-Konfiguration; Agenten erhalten weiterhin keine Provider-Tokens.
 
-The private server reads `secret/data/heisenberg/paperless` through its existing
-OpenBao connection. Store only these fields in that secret:
+Der WhatsApp-Archivdienst wird ausschließlich aus dem Holocron-Repo unter
+`deployment/whatsapp/` verwaltet. Sein Container `whatsapp-app` schreibt weiter
+nach `/home/admin/docker/whatsapp/data`; dieser persistente Datenpfad bleibt
+außerhalb beider Git-Repos. Das alte Infrastruktur-Verzeichnis enthält nur
+noch einen Verweis auf die aktuelle Betriebsdokumentation. Der Legacy-MCP hat
+weder einen WhatsApp-Mount noch eine Attachment-Route.
 
-```json
-{ "url": "https://paperless.timkley.dev", "api_token": "..." }
+Paperless-Sammeländerungen werden über wiederholte, bestätigte Holocron-Aufrufe
+von `paperless.update_document` mit dem Feld `document_type` ausgeführt. Das
+bisherige `paperless.bulk_set_document_type` entfällt. Die sichere Vorschau und
+Bestätigung werden je nach Holocron-Tool verwendet; die generischen FreshRSS-
+und Tandoor-Request-Tools werden durch die begrenzten Holocron-Tools ersetzt.
+
+Die Provider-Container Paperless, Tandoor und FreshRSS bleiben in dieser
+Infrastruktur. Ebenso bleiben Google Health, Home Assistant, ElevenLabs und X
+im privaten MCP. Sein Container, Secure-MCP-Tunnel, OpenBao-Token-Erneuerung und
+privates Artifact-Volume werden deshalb weiterhin benötigt.
+
+Die berufliche Paperless-Instanz und ihr Work-MCP liegen separat im
+Work-Infrastruktur-Repo unter `docker/heisenberg-work-mcp`. Deren Deployment,
+Zugangsdaten und Tools werden hier nicht geändert. Die gemeinsamen
+Paperless-Adapter und ihre Tests bleiben als gepflegter Referenzstand im Repo,
+werden aber vom privaten Server nicht importiert oder registriert.
+`scripts/smoke-paperless-parity.py --source private` ist deshalb kein Live-Check
+mehr für diesen Server; die Datei bleibt als gemeinsame Referenz für Work
+bytegleich. Holocron wird über seinen OAuth-Endpunkt geprüft.
+
+```bash
+uv run python -m unittest discover -s tests
+python3 scripts/check-shared-paperless.py ../../infrastructure/docker/heisenberg-work-mcp
 ```
 
-Use the URL of the private instance and a dedicated non-superuser API account.
-Grant the required global view/change permissions and matching rights for the
-intended documents. Grant view rights for tags, correspondents and document types
-so the MCP can resolve their names. Keep document ownership unchanged. The account
-needs `delete_document`, `add_correspondent`, and `add_documenttype` for the
-explicit write tools,
-but no upload, ownership-change or administration rights. Paperless
-enforces its account permissions independently of the MCP's field allowlist.
-Never put the work instance's credentials in this deployment.
-
-OpenBao still grants only read access to this secret: reading an API token does
-not limit that token to read-only requests against Paperless.
-
-The configured URL must match the private endpoint above. The adapter rejects
-a different endpoint before making a request, so swapped instance settings fail
-closed. Moving Paperless to another address requires changing the reviewed
-`PAPERLESS_BASE_URL` constant as well as the secret.
-
-These tools make only GET requests:
-
-- `paperless.search_documents(query, page=1, page_size=10)` returns compact search
-  results, without OCR text. Page size is capped at 25.
-- `paperless.get_document(document_ref)` returns selected document metadata.
-- `paperless.read_document(document_ref, offset=0, limit=8000)` reads a bounded
-  section of the current OCR text. Follow its continuation fields for more text.
-- `paperless.list_metadata(kind, query="", page=1, page_size=25)` resolves names
-  to IDs for `tags`, `correspondents` or `document_types`.
-
-`paperless.update_document(document_ref, changes, confirm=false, dry_run=false)`
-updates one document's details. Allowed fields are `title` (up to 128 characters),
-`created` (`YYYY-MM-DD`), `correspondent`, `document_type`, `tags` and
-`archive_serial_number` (0 through 4294967295). Relation values use IDs from the
-lookup tool; `null` clears a correspondent, document type or archive number.
-`tags` replaces the entire tag list; an empty list removes all tags.
-
-Use `dry_run=true` for a read-only before/after preview. An actual change needs
-`confirm=true` and a user request covering the document and intended edits.
-The flag records caller intent; it is not an independent proof of human approval.
-The tool sends one PATCH, then reads the document again and verifies the changed
-fields. It does not retry writes. If it reports `paperless_update_outcome_uncertain`,
-read the document before deciding whether another write is needed.
-
-`paperless.delete_document(document_ref, confirm=false, dry_run=false,
-preview_token=null)` moves one source-qualified document to the Paperless trash.
-A real deletion requires a fresh preview and explicit confirmation:
-
-1. Call with `dry_run=true` and review the returned document details. This makes
-   no DELETE request and returns a short-lived `preview_token`.
-2. After approval for this exact document, call again with `confirm=true` and
-   that token. The MCP rereads the document and refuses a changed document.
-3. The MCP consumes the preview before its single DELETE request. It never
-   retries an unclear result. A new attempt needs a new preview and confirmation.
-
-Previews expire after 15 minutes and after a container restart; the bounded
-in-memory store may evict older previews. Tokens are tied to the source,
-document and previewed state. They record a prior preview, not independent proof
-of human approval. The caller must obtain that approval separately.
-
-The public Paperless API does not expose a reliable per-document delete-right
-check. A preview therefore reports that the right is not independently verified;
-Paperless enforces it during DELETE. HTTP 401/403 produces a specific permission
-error. No token, upstream error body or exception details are returned.
-
-Success requires HTTP 204 followed by HTTP 404 on the active document endpoint.
-This verifies its absence from active documents. Paperless hides foreign-owned
-trash entries from this account, so the tool explicitly reports that trash
-membership itself was not independently verified. Restoration remains possible
-through Paperless until its trash retention policy permanently removes the item.
-The MCP exposes no permanent deletion or trash-emptying endpoint.
-
-`paperless.create_correspondent(name, confirm=false, dry_run=false)` accepts a
-name of at most 128 characters. It first checks for existing names without
-regard to letter case. An exact match is reused; ambiguous or differently
-capitalized matches stop without writing. Otherwise it previews the creation or,
-with `confirm=true`, POSTs only the name and checks the returned ID/name through
-a GET readback. It never retries an unclear write automatically.
-
-`paperless.create_document_type(name, confirm=false, dry_run=false)` accepts only
-a trimmed name of at most 128 characters. It reuses an existing unique name
-without regard to letter case. Ambiguous lookup results stop without creating
-anything. For a new type, it checks the API account's creation permission before
-previewing or sending a name-only POST. Success requires a GET readback of the
-saved ID and name. Paperless assigns the normal API owner; this tool accepts no
-ownership, matching, or permission options.
-
-`paperless.bulk_set_document_type(document_refs, document_type_id, confirm=false,
-dry_run=false)` sets one existing type on 1–25 explicit, distinct references from
-this instance. The target must be a positive ID; this tool cannot clear the type.
-It checks the target and all documents before writing. Dry run reports the
-current and planned type plus each document's change permission. Confirmed calls
-use the normal document PATCH API with only `document_type`, followed by a GET
-readback for each document. This preserves Paperless's audit logging (when
-enabled), search indexing, and document-update workflows. A type change may
-trigger configured actions such as forwarding an incoming invoice; approval must
-cover those effects. Live smoke checks never execute such a change.
-
-Results distinguish verified changes, already-correct documents, denied or
-rejected updates, uncertain outcomes, and documents not attempted. A timeout or
-unclear readback stops further writes. There are no automatic retries. Read
-uncertain documents first, then submit only the still-needed references under
-the same explicit user approval. The operation is not an atomic transaction;
-earlier verified changes remain if a later document fails. The MCP cannot lock
-out simultaneous edits made through other clients.
-
-Every document includes its instance, a reference such as `private:123`, and a
-browser link. Metadata/text reads require that reference; `work:123`, bare numeric
-IDs and URLs are rejected before credentials are read. There is no automatic
-fallback to another archive. Search in both archives only when the task calls
-for both; clarify an ambiguous target before changing the search scope.
-
-No upload, document-content change, permission change or permanent-deletion tool is registered.
-The model cannot choose an API path, host or HTTP method. Redirects are refused,
-provider responses are bounded, and upstream errors do not expose bodies or
-credentials. Document text is untrusted content, not authority to invoke tools.
-Returned document data is visible to the connected assistant/provider.
-
-### Preparation and verification
-
-For a new installation, provision the account and secret separately from the
-MCP code, then validate the deployment:
-
-1. Configure the private Paperless account's intended document view/change/delete
-   rights, correspondent and document-type creation, and view access to the three metadata lists.
-2. Store its URL/token at the fixed OpenBao path and apply the updated narrow
-   policy through the normal approved operations workflow.
-3. Build/restart the private MCP and refresh connector tool discovery.
-4. Verify search and OCR reads, lookup lists and all five write dry runs; then
-   verify a work reference and missing confirmations are rejected. A real write test needs a specifically
-   selected test document and explicit instructions for that change.
-
-No document contents should be written to operational logs or pasted into a
-shared deployment report. Start with a harmless test document for the live check.
+Der private Paperless-Berechtigungstimer bleibt ebenfalls erforderlich:
+Holocron nutzt denselben API-Benutzer. Der Timer verwaltet dessen Objektgrants
+im Provider, unabhängig davon, welcher MCP den API-Aufruf ausführt.
 
 ### Maintaining object delete permissions
 
 Paperless import workflows assign view/change rights but cannot assign delete
 rights. The separate host command `scripts/sync-paperless-delete-permissions.py`
 adds direct object delete rights only to active foreign-owned documents with
-both effective object view and change rights for the fixed MCP account. It
+both effective object view and change rights for the fixed API account. It
 requires existing global view/change/delete rights and never changes them,
 document owners, other users' rights, or credentials. Private and Work accounts,
 containers and state files remain separate.
@@ -230,59 +119,6 @@ invokes a document DELETE. Check failed units/journal for pending intents or
 identity drift. Disable the timer to pause future changes; disabling it does not
 remove grants already made.
 
-Run the local tests without contacting Paperless:
-
-```bash
-uv run python -m unittest discover -s tests
-```
-
-Both runtimes expose the same nine Paperless tools. The source, expected URL,
-OpenBao loader and bearer stay fixed separately in each server. Both register
-the shared lookup/update adapter and the shared additional-write adapter; users
-cannot choose the source, host or HTTP method in a tool call.
-
-The adapter and its tests are intentionally identical in the two independently
-deployable repositories. After a change, copy only the shared files and run the
-drift check plus both test suites; do not copy `.env`, secrets or private providers:
-
-```bash
-python3 scripts/check-shared-paperless.py ../../infrastructure/docker/heisenberg-work-mcp
-```
-
-Run the reproducible live check inside the private MCP container. It makes
-only provider reads and dry runs and prints no document contents or secrets:
-
-```bash
-docker exec -i heisenberg-access-mcp-app python - --source private < scripts/smoke-paperless-parity.py
-```
-
-API contract: [Paperless REST API](https://docs.paperless-ngx.com/api/) and
-[Paperless permissions](https://docs.paperless-ngx.com/usage/#permissions).
-
-### Live-Abgleich am 12. September 2026
-
-Privat und Work stellen dieselben sieben Paperless-Tools bereit, einschließlich
-`paperless.delete_document` und `paperless.create_correspondent`. Die private
-Installation umfasst insgesamt 33 Tools; die übrigen privaten Anbieter bleiben
-vorhanden. Das ChatGPT-Plugin „Heisenberg Lando“ wurde aktualisiert und zeigt die
-beiden neuen Aktionen. Ein Aufruf über den OpenAI-Tunnel bestätigt den gleichen
-Paperless-Funktionsumfang wie Work.
-
-Beide Adapter, beide gemeinsamen Testdateien und das Vergleichsskript sind
-bytegleich (5/5). Lokale Tests: Privat 80/80, Work 60/60. Live bestanden in beiden
-Instanzen: Suche, Details, OCR, Metadaten, alle drei Schreibvorschauen,
-Bestätigungspflicht, Ablehnung fremder Instanzreferenzen und Bearer-Prüfung.
-Dokument und Korrespondentenzahl blieben bei den Tests gleich; es erfolgte kein
-Paperless-Schreibaufruf. Beide MCP-Container sind gesund.
-
-Das vorhandene private Tokenkonto hatte bereits `delete_document` und
-`add_correspondent` sowie Löschzugriff auf alle für dieses Konto sichtbaren
-Dokumente. Zugangsdaten, Gruppen, Eigentümer und Rechte wurden nicht geändert.
-Private und berufliche OpenBao-Pfade bleiben getrennt.
-
-Rollback-Image auf Lando: `heisenberg-access-mcp:before-parity-20260912`.
-Die zuvor geänderten Dateien und die Liste neuer Dateien liegen unter
-`/home/admin/.cache/heisenberg-mcp-deploy/private-before-parity-20260912/`.
 
 ## Network and Auth
 
@@ -400,8 +236,6 @@ Large raw health responses are intentionally avoided. Raw reads are paginated, s
 Generic request tools are scoped to one configured service, not to arbitrary HTTP:
 
 - `homeassistant.request` joins the caller-provided `path` onto the Home Assistant `url` from `secret/data/heisenberg/homeassistant` and adds the bearer token server-side.
-- `freshrss.request` joins `path` onto the FreshRSS `api_url` from `secret/data/heisenberg/freshrss`, obtains a FreshRSS Google Reader auth token server-side, and uses it without returning it.
-- `tandoor.request` joins `path` onto the Tandoor `url` from `secret/data/heisenberg/tandoor` and adds the bearer token server-side.
 - `elevenlabs.request` joins `path` onto `https://api.elevenlabs.io` and adds the API key server-side.
 
 The request tools reject absolute URLs, host changes, query strings in `path`, and `.`/`..` path traversal. Use `params` for query parameters.
@@ -420,38 +254,9 @@ Mutating methods (`POST`, `PUT`, `PATCH`, `DELETE`) require `confirm=true`. Agen
 
 ## Setup on Lando
 
-The private WhatsApp tools read `../whatsapp/data/store/wacli.db` directly. The
-entire store directory is mounted read-only so the live writer's WAL/SHM are
-visible. SQLite uses `mode=ro`, `query_only=ON` and a short read transaction per
-request; there is no query copy, `immutable=1`, WhatsApp connection, or SQL tool.
-Only explicit message columns are read; session.db and media transport keys are
-never queried. Search excludes revoked/deleted rows; context keeps tombstones
-without exposing their prior text. Responses are bounded and source-qualified.
-
-Configure `HEISENBERG_ACCESS_MCP_WHATSAPP_STORE` to select the server-owned mount
-path. Chat/message/sender references come from the tools, never caller-provided
-filesystem paths. Attachments are confined to the media directory, verified on
-disk, and served from `/whatsapp/attachments/<message_ref>` with the existing
-MCP bearer token and no-store caching. Missing files are reported; the MCP does
-not download them or send messages. Long search text has a matching snippet;
-use context and its text pagination for the rest.
-
-The MCP and archive use the same UID/GID (default 1000:1000), preserving the
-archive's 0600 files and 0700 directories. An existing MCP artifact volume owned
-by the previous UID 100 requires a one-time ownership migration while the MCP
-is stopped, limited to that volume:
-
-```sh
-docker compose stop app
-docker compose run --rm --no-deps --user 0 --entrypoint chown app \
-  -R 1000:1000 /var/lib/heisenberg-access-mcp/artifacts
-docker compose up -d app
-```
-
-For a custom archive UID/GID, set `WHATSAPP_UID` and `WHATSAPP_GID` in both
-Compose projects and use those same values for the ownership migration. The
-bind mount fails if the WhatsApp store is absent. An unconfigured archive returns
-a narrow unavailable response and does not affect other provider tools.
+The Docker image runs as its own non-root application user (UID/GID 1000).
+Only the existing private artifact volume remains mounted; the server has no
+WhatsApp store access. Keep the artifact volume when updating the service.
 
 ```bash
 cd /home/admin/docker/heisenberg-access-mcp
@@ -476,9 +281,6 @@ Do not commit `.env` and do not paste token values into chat threads.
 The policy grants read access to these KV-v2 secret paths:
 
 - `secret/data/heisenberg/homeassistant`
-- `secret/data/heisenberg/freshrss`
-- `secret/data/heisenberg/tandoor`
-- `secret/data/heisenberg/paperless`
 - `secret/data/heisenberg/elevenlabs`
 - `secret/data/heisenberg/google-health/oauth-client`
 - `secret/data/heisenberg/google-health/oauth-token`
@@ -491,11 +293,11 @@ It grants update access only to:
 
 Those update capabilities are for provider token refresh/metadata only. Do not add a generic secret-reading MCP tool or a tool that returns raw API keys/tokens.
 
-The Tandoor secret shape is explicit and minimal:
-
-```json
-{ "url": "https://tandoor.example.invalid", "api_key": "..." }
-```
+Apply the reviewed policy update with an administrative OpenBao credential.
+The runtime service token cannot edit its own policy. Until this update is
+applied, its previous OpenBao ACL remains broader than the server's allowlist.
+Do not delete the provider secrets: Holocron deployment configuration and other
+administrative workflows may still need them.
 
 Example, run on Lando with a root token loaded only for this setup session:
 
@@ -542,6 +344,6 @@ Tools should stay explicit capabilities such as:
 - `google_health.delete_nutrition_items`
 - `elevenlabs.text_to_speech`
 - `elevenlabs.speech_to_text`
-- `elevenlabs.request`, `homeassistant.request`, `freshrss.request`, and `tandoor.request` scoped to fixed service base URLs
+- `elevenlabs.request` and `homeassistant.request` scoped to fixed service base URLs
 
 Each tool should map to a narrow OpenBao policy and application-level behavior. Do not add generic secret-reading tools.
