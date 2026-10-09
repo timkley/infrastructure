@@ -18,12 +18,6 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 import uvicorn
-from .paperless import (
-    PAPERLESS_CAPABILITIES,
-    PAPERLESS_UPDATE_CAPABILITIES,
-    PaperlessError,
-    register_paperless_tools,
-)
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import Context, FastMCP
@@ -40,12 +34,8 @@ from starlette.routing import Mount, Route
 LOGGER = logging.getLogger("heisenberg_access_mcp")
 OPENBAO_HEALTH_STATUS_CODES = {200, 429, 472, 473, 501, 503}
 OPENBAO_SECRET_MOUNT = "secret"
-PAPERLESS_BASE_URL = "https://paperless.timkley.dev"
 OPENBAO_ALLOWED_SECRETS = {
-    "paperless": "heisenberg/paperless",
     "homeassistant": "heisenberg/homeassistant",
-    "freshrss": "heisenberg/freshrss",
-    "tandoor": "heisenberg/tandoor",
     "elevenlabs": "heisenberg/elevenlabs",
     "google_health_oauth_client": "heisenberg/google-health/oauth-client",
     "google_health_oauth_token": "heisenberg/google-health/oauth-token",
@@ -738,18 +728,6 @@ CAPABILITIES: dict[str, dict[str, Any]] = {
         "enabled": True,
         "secret_access": "server-side OpenBao Home Assistant token",
         "scope": "configured Home Assistant base URL only",
-    },
-    "freshrss.request": {
-        "tool": "freshrss.request",
-        "enabled": True,
-        "secret_access": "server-side OpenBao FreshRSS API password",
-        "scope": "configured FreshRSS API base URL only",
-    },
-    "tandoor.request": {
-        "tool": "tandoor.request",
-        "enabled": True,
-        "secret_access": "server-side OpenBao Tandoor API key",
-        "scope": "configured Tandoor base URL only",
     },
 }
 
@@ -3585,28 +3563,6 @@ async def service_request(
     )
 
 
-async def freshrss_auth_token(api_url: str, username: str, api_password: str) -> str:
-    login_url = join_service_url(api_url, "/accounts/ClientLogin")
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(
-            login_url,
-            data={
-                "Email": username,
-                "Passwd": api_password,
-            },
-        )
-
-    if response.status_code != 200:
-        raise CapabilityError("freshrss_auth_failed", **sanitized_api_error(response))
-
-    for line in response.text.splitlines():
-        key, _, value = line.partition("=")
-        if key == "Auth" and value:
-            return value
-
-    raise CapabilityError("freshrss_auth_token_missing")
-
-
 def legacy_elevenlabs_operation(operation: str) -> dict[str, str] | None:
     spec = LEGACY_ELEVENLABS_OPERATIONS.get(operation)
     if spec is None:
@@ -3951,7 +3907,7 @@ def build_mcp() -> FastMCP:
             "source": "private",
             "ok": True,
             "openbao": openbao_target_summary(openbao_addr),
-            "capabilities": {**CAPABILITIES, **PAPERLESS_CAPABILITIES, **PAPERLESS_UPDATE_CAPABILITIES},
+            "capabilities": CAPABILITIES,
         }
 
     @mcp.tool()
@@ -4813,112 +4769,6 @@ def build_mcp() -> FastMCP:
             emit_event("capability_error", tool="homeassistant.request", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
 
-    @mcp.tool(name="freshrss.request")
-    async def freshrss_request(
-        ctx: Context,
-        method: str = "GET",
-        path: str = "/reader/api/0/user-info",
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
-        form_body: dict[str, Any] | None = None,
-        response_mode: str = "auto",
-        confirm: bool = False,
-        dry_run: bool = False,
-    ) -> dict[str, Any]:
-        """Request FreshRSS within the configured API base URL using server-side API-password auth."""
-        emit_event("mcp_tool_call", tool="freshrss.request", client_id="heisenberg-access-mcp-env-token")
-        try:
-            if not dry_run:
-                ensure_write_confirmed(normalize_service_method(method), confirm)
-            secret = await openbao.read("freshrss")
-            api_url = required_secret_value(secret, "api_url")
-            username = required_secret_value(secret, "username")
-            api_password = required_secret_value(secret, "api_password")
-            auth_token = "dry-run" if dry_run else await freshrss_auth_token(api_url, username, api_password)
-            return await service_request(
-                base_url=api_url,
-                path=path,
-                method=method,
-                headers={
-                    "Authorization": f"GoogleLogin auth={auth_token}",
-                    "Accept": "application/json, text/*;q=0.9, */*;q=0.1",
-                },
-                resource_url=resource_url,
-                service_name="freshrss",
-                params=params,
-                json_body=json_body,
-                form_body=form_body,
-                response_mode=response_mode,
-                confirm=confirm,
-                dry_run=dry_run,
-            )
-        except OpenBaoError as error:
-            emit_event(
-                "capability_error",
-                tool="freshrss.request",
-                error=error.code,
-                openbao_status=error.status_code,
-            )
-            return openbao_error_payload(error)
-        except CapabilityError as error:
-            emit_event("capability_error", tool="freshrss.request", error=error.code)
-            return capability_error_payload(error)
-        except httpx.HTTPError as error:
-            emit_event("capability_error", tool="freshrss.request", error=type(error).__name__)
-            return {"ok": False, "error": type(error).__name__}
-
-    @mcp.tool(name="tandoor.request")
-    async def tandoor_request(
-        ctx: Context,
-        method: str = "GET",
-        path: str = "/api/recipe/",
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
-        response_mode: str = "auto",
-        confirm: bool = False,
-        dry_run: bool = False,
-    ) -> dict[str, Any]:
-        """Request Tandoor within the configured base URL using server-side bearer auth."""
-        emit_event("mcp_tool_call", tool="tandoor.request", client_id="heisenberg-access-mcp-env-token")
-        try:
-            if not dry_run:
-                ensure_write_confirmed(normalize_service_method(method), confirm)
-            secret = await openbao.read("tandoor")
-            base_url = required_secret_value(secret, "url")
-            api_key = required_secret_value(secret, "api_key")
-            return await service_request(
-                base_url=base_url,
-                path=path,
-                method=method,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Accept": "application/json, text/*;q=0.9, */*;q=0.1",
-                    "Accept-Encoding": "identity",
-                },
-                resource_url=resource_url,
-                service_name="tandoor",
-                params=params,
-                json_body=json_body,
-                form_body=None,
-                response_mode=response_mode,
-                confirm=confirm,
-                dry_run=dry_run,
-            )
-        except OpenBaoError as error:
-            emit_event(
-                "capability_error",
-                tool="tandoor.request",
-                error=error.code,
-                openbao_status=error.status_code,
-            )
-            return openbao_error_payload(error)
-        except CapabilityError as error:
-            emit_event("capability_error", tool="tandoor.request", error=error.code)
-            return capability_error_payload(error)
-        except httpx.HTTPError as error:
-            emit_event("capability_error", tool="tandoor.request", error=type(error).__name__)
-            return {"ok": False, "error": type(error).__name__}
-
     @mcp.tool(name="elevenlabs.text_to_speech")
     async def elevenlabs_text_to_speech(
         ctx: Context,
@@ -5016,22 +4866,6 @@ def build_mcp() -> FastMCP:
         except httpx.HTTPError as error:
             emit_event("capability_error", tool="elevenlabs.speech_to_text", error=type(error).__name__)
             return {"ok": False, "error": type(error).__name__}
-
-    async def load_paperless_credentials() -> dict[str, Any]:
-        try:
-            return await openbao.read("paperless")
-        except OpenBaoError as error:
-            raise PaperlessError(error.code) from None
-        except httpx.HTTPError:
-            raise PaperlessError("paperless_credentials_unavailable") from None
-
-    register_paperless_tools(
-        mcp,
-        source="private",
-        expected_base_url=PAPERLESS_BASE_URL,
-        load_credentials=load_paperless_credentials,
-        allow_updates=True,
-    )
 
     return mcp
 

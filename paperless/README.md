@@ -1,7 +1,7 @@
 # Paperless
 
 Paperless runs on Lando at `/home/admin/docker/paperless` with SQLite and Redis 7.
-The Compose file pins Paperless to `3.1.3`. Keep `PAPERLESS_SECRET_KEY` in the
+The Compose file pins Paperless to `3.3.0`. Keep `PAPERLESS_SECRET_KEY` in the
 server's `.env`; changing it invalidates existing signed sessions and tokens.
 
 ## v3 settings
