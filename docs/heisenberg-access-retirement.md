@@ -25,9 +25,13 @@ Private runtime backups are stored on Lando under
 permissions. The existing `heisenberg-access-mcp_artifacts` Docker volume is
 retained and has a separate backup. No audio originals or transcripts are deleted.
 
-The independent Paperless permission maintainer moved to
-[paperless/delete-permissions](../paperless/delete-permissions/README.md).
-Its existing host timer and state ledger remain active.
+The independent Paperless permission maintainer was also removed from Lando on
+2026-10-09 at Tim's request. Its private timer, service templates, installed script,
+state ledger and repository source have been removed. Existing document permissions
+were not revoked; future permission changes are no longer synchronized by this task.
+The service files and state were backed up under
+`/home/admin/backups/paperless-permissions-retirement-2026-10-09/` with restricted
+permissions. The separate Work deployment was not changed.
 
 The ElevenLabs OpenAPI helper currently limits responses to 16 MiB and has a
 30-second response timeout. Paid transcriptions retain explicit approval and
