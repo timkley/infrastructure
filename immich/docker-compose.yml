@@ -51,7 +51,7 @@ services:
 
   broker:
     container_name: immich-broker
-    image: docker.io/valkey/valkey:9.1.2@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    image: docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0
     healthcheck:
       test: redis-cli ping || exit 1
     restart: always

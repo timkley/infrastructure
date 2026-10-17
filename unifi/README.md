@@ -14,7 +14,7 @@ configured inform URL. If layer-2 discovery is needed later, temporarily add
 
 ## Update and migration
 
-The stack uses UniFi Network Application 10.5.67 and MongoDB 8.0.29. Both
+The stack uses UniFi Network Application 10.6.106 (LinuxServer build ls150) and MongoDB 8.0.34. Both
 images are pinned by tag and digest. MongoDB authentication is enabled and the
 database port is not published.
 

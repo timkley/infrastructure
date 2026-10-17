@@ -1,0 +1,38 @@
+# Copy to /home/admin/docker/traefik/dynamic/dnd.toml (file provider, watched). Traefik reaches the host
+# through host.docker.internal; ufw admits ports 8009/8083 only from 172.16.0.0/12.
+
+# WebSocket handshake of Reverb clients (wss://dnd.timkley.dev/app/<key>). "/app/" deliberately excludes
+# Reverb's HTTP API under /apps, which the app reaches over loopback.
+[http.routers.dnd-reverb]
+  rule = "Host(`dnd.timkley.dev`) && PathPrefix(`/app/`)"
+  entrypoints = ["websecure"]
+  service = "dnd-reverb"
+  priority = 100
+  [http.routers.dnd-reverb.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.dnd-reverb.loadBalancer]
+  [[http.services.dnd-reverb.loadBalancer.servers]]
+    url = "http://host.docker.internal:8083"
+
+[http.routers.dnd]
+  rule = "Host(`dnd.timkley.dev`)"
+  entrypoints = ["websecure"]
+  service = "dnd"
+  middlewares = ["dnd-headers"]
+  [http.routers.dnd.tls]
+    certResolver = "lets-encrypt"
+
+[http.services.dnd.loadBalancer]
+  [[http.services.dnd.loadBalancer.servers]]
+    url = "http://host.docker.internal:8009"
+
+[http.middlewares.dnd-headers.headers]
+  stsSeconds = 31536000
+  contentTypeNosniff = true
+  frameDeny = true
+  referrerPolicy = "same-origin"
+  permissionsPolicy = "camera=(), microphone=(), geolocation=()"
+  [http.middlewares.dnd-headers.headers.customResponseHeaders]
+    Server = ""
+    X-Powered-By = ""

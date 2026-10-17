@@ -11,7 +11,7 @@
 
 services:
   app:
-    image: ghcr.io/paperless-ngx/paperless-ngx:3.3.0@sha256:6b94799bc769a063b3340cc5847402e626d4d91d29a295a8e747f8e9bead4207
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.3.1@sha256:9d3a7376e86c8beb6178a1b5cf7503535516eb3f4c66cc5919f526c519d9f223
     restart: unless-stopped
     depends_on:
       - broker

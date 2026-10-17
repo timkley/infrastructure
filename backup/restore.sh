@@ -22,7 +22,7 @@ usage() {
     echo "  $0 snapshots [service]           List available snapshots"
     echo "  $0 restore <service> [snapshot]  Restore to temp directory"
     echo ""
-    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao"
+    echo "Services: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao, dnd"
     exit 1
 }
 
@@ -146,6 +146,13 @@ EOF
 
   Keep Root-Token and Unseal-Keys out of shells with history where possible.
   Restore should be rehearsed before relying on OpenBao for production MCP access.
+EOF
+            ;;
+        dnd)
+            cat <<'EOF'
+  1. Check the backup in a throwaway container (does not touch the live database):
+       /var/www/dnd/deploy/restore-check.sh $RESTORE_DIR/home/admin/backups/dnd/restic
+  2. Put it back: follow "Datenbank zurückspielen" in /var/www/dnd/docs/ops/pilot.md
 EOF
             ;;
         *)

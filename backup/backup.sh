@@ -2,7 +2,7 @@
 #
 # backup.sh — Back up Docker service data to Hetzner Storage Box via restic
 #
-# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao
+# Backs up: paperless, tandoor, unifi, beszel, traefik, couchdb, immich, openbao, dnd
 # Run manually:  ./backup.sh
 # Run one service: ./backup.sh paperless
 #
@@ -247,11 +247,32 @@ backup_openbao() {
     log "openbao: done"
 }
 
+backup_dnd() {
+    # Dump and manifests come from the app repo (docs/ops/pilot.md); secrets stay out of the backup.
+    local staging="$HOME/backups/dnd/restic"
+    log "dnd: starting backup"
+
+    rm -rf "$staging"
+    if ! /var/www/dnd/deploy/backup-dump.sh "$staging" >/dev/null; then
+        rm -rf "$staging"
+        log_error "dnd: pg_dump failed"
+        return
+    fi
+
+    restic backup --tag dnd "$staging"
+
+    rm -rf "$staging"
+
+    log "dnd: done"
+}
+
 # ---------------------------------------------------------------------------
-# Retention policy: daily 7, weekly 4, monthly 6
+# Retention policy: daily 7, weekly 4, monthly 6 (dnd: daily 7 only)
 # ---------------------------------------------------------------------------
 apply_retention() {
     log "Applying retention policy"
+    # dnd keeps 7 days only: deleted accounts must age out of every backup (dnd OPS-02, E4).
+    restic forget --tag dnd --group-by "host,tags" --keep-daily 7
     restic forget \
         --keep-daily 7 \
         --keep-weekly 4 \
@@ -264,7 +285,7 @@ apply_retention() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich openbao)
+ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich openbao dnd)
 
 main() {
     acquire_lock
@@ -284,6 +305,7 @@ main() {
             couchdb)   backup_couchdb   ;;
             immich)    backup_immich    ;;
             openbao)   backup_openbao   ;;
+            dnd)       backup_dnd       ;;
             *) log_error "Unknown service: $svc" ;;
         esac
     done

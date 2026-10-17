@@ -1,6 +1,6 @@
 services:
   reverse-proxy:
-    image: traefik:v3.7.13@sha256:1c32e7c368204fd72812152ebdd2ac0425993df6fd982317deb02e48f2d5423c
+    image: traefik:v3.7.14@sha256:5902d68e00708015736416b62faa49d23a2e1d4415649e5831d20b79ba301508
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
