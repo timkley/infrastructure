@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=smoke-test.sh
+# shellcheck source=openbao/smoke-test.sh
 source "$SCRIPT_DIR/smoke-test.sh"
 
 if [[ "$OPENBAO_UID" != "100" ]]; then
@@ -81,6 +81,13 @@ want_readable "$tmp/owner100/openbao.hcl" 0 "mode 600 owner ${OPENBAO_UID}"
 want_readable "$tmp/dir700/openbao.hcl" 1 "directory 700"
 want_readable "$tmp/group640/openbao.hcl" 1 "mode 640 group 1000"
 want_readable "$SCRIPT_DIR/config/openbao.hcl" 0 "repo config/openbao.hcl"
+
+err="$(openbao_config_readable "$tmp/mode600/openbao.hcl" 2>&1 >/dev/null || true)"
+[[ "$err" == *"SKIP_CHOWN=true"* ]]
+[[ "$err" == *"no secrets"* ]]
+[[ "$err" == *"chmod 644"* ]]
+printf '%s\n' "$err" | sed 's/^/message: /'
+printf 'ok error text\n'
 
 if openbao_config_readable "$tmp/missing.hcl" >/dev/null 2>&1; then
   echo "FAIL missing file was accepted" >&2
