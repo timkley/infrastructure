@@ -13,15 +13,6 @@ LOCK_FILE="/tmp/vps-backup.lock"
 ERRORS=()
 
 # ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-if [[ ! -f "$SCRIPT_DIR/backup.env" ]]; then
-    echo "ERROR: backup.env not found. Run setup.sh first." >&2
-    exit 1
-fi
-source "$SCRIPT_DIR/backup.env"
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 log()       { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
@@ -206,6 +197,9 @@ backup_openbao() {
 
     if ! container_running "$dir" app; then
         log_error "openbao: app container is not running"
+        log_error "openbao: recent container logs:"
+        compose "$dir" logs --tail 40 --timestamps app >&2 \
+            || log_error "openbao: could not read container logs"
         return
     fi
 
@@ -288,6 +282,13 @@ apply_retention() {
 ALL_SERVICES=(paperless tandoor unifi beszel traefik couchdb immich openbao dnd)
 
 main() {
+    if [[ ! -f "$SCRIPT_DIR/backup.env" ]]; then
+        echo "ERROR: backup.env not found. Run setup.sh first." >&2
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/backup.env"
+
     acquire_lock
 
     local services=("${@:-${ALL_SERVICES[@]}}")
@@ -323,4 +324,6 @@ main() {
     hc_ping ""
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
