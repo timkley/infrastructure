@@ -85,6 +85,19 @@
         "workflow_run",
         "workflow_dispatch"
       ]
+    },
+    "timkley/dnd": {
+      "app": "dnd",
+      "refs": [
+        "refs/heads/main"
+      ],
+      "events": [
+        "push",
+        "workflow_dispatch"
+      ],
+      "workflow_refs": [
+        "timkley/dnd/.github/workflows/ci.yml@refs/heads/main"
+      ]
     }
   }
 }
